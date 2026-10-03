@@ -1,0 +1,8 @@
+{
+  "name": "GateKeeper Enterprise",
+  "description": "Enterprise stage-gate project assurance and compliance intelligence platform across GDPR, Security, AI, and PMO governance.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

@@ -1,0 +1,2904 @@
+"use client";
+
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import Link from 'next/link';
+import {
+  activeInfrastructureProjects,
+  upcomingProjectDeadlines,
+  recentAuditProgressMetrics,
+  InfrastructureProject,
+  UpcomingDeadline,
+  RecentProgressMetric,
+  GovernanceFramework,
+  FRAMEWORK_CONFIGS
+} from '@/lib/seedData';
+import {
+  Assessment as AssessmentIcon,
+  AssignmentTurnedIn as VerifiedIcon,
+  WarningAmber as WarningIcon,
+  CalendarMonth as CalendarIcon,
+  AccessTime as TimeIcon,
+  Search as SearchIcon,
+  FilterList as FilterIcon,
+  Add as AddIcon,
+  Close as CloseIcon,
+  OpenInNew as ExternalLinkIcon,
+  CheckCircleOutline as CheckIcon,
+  HourglassEmpty as HourglassIcon,
+  ErrorOutline as ErrorIcon,
+  ArrowForward as ArrowIcon,
+  FileDownload as DownloadIcon,
+  Tune as TuneIcon,
+  AccountBalance as TreasuryIcon,
+  Business as ProjectIcon,
+  TrendingUp as TrendingUpIcon,
+  Refresh as RefreshIcon,
+  Timeline as TimelineIcon,
+  PictureAsPdf as PdfIcon,
+  PieChart as PieChartIcon,
+  BarChart as BarChartIcon,
+  HelpOutline as HelpIcon,
+  MenuBook as BookIcon,
+  CompareArrows as CompareIcon
+} from '@mui/icons-material';
+import { motion, AnimatePresence } from 'framer-motion';
+import ReviewStatusDistributionChart from './ReviewStatusDistributionChart';
+import ComplianceStatusPieChart from './ComplianceStatusPieChart';
+import { FindingsSeverityPieChart } from './FindingsSeverityPieChart';
+import { PeerBenchmarkingView } from './PeerBenchmarkingView';
+import { ErrorBoundary } from './ErrorBoundary';
+import { DashboardAuditFindingsSearch } from './DashboardAuditFindingsSearch';
+import { AutoRefreshToggle } from './AutoRefreshToggle';
+import { IngestCompanyProjectModal } from './IngestCompanyProjectModal';
+import { getFirestoreAll, db } from '@/lib/firebase';
+import { collection, onSnapshot } from 'firebase/firestore';
+import { fetchItems } from '@/utils/api';
+import { exportPortfolioCompliancePdf, exportComplianceAuditPdf } from '@/utils/exportCompliancePdf';
+import { useCompany } from '@/context/CompanyContext';
+
+export default function PortfolioDashboard() {
+  const { companyProfile, setIsSetupModalOpen, loadDemoCompany } = useCompany();
+
+  // State management for projects, deadlines, and activities
+  const [projects, setProjects] = useState<InfrastructureProject[]>(
+    activeInfrastructureProjects.map(p => ({ ...p, isSampleData: true }))
+  );
+  const [dataScope, setDataScope] = useState<'ALL' | 'COMPANY' | 'SAMPLE'>('ALL');
+  const [isIngestModalOpen, setIsIngestModalOpen] = useState(false);
+  const [isPurgeConfirmOpen, setIsPurgeConfirmOpen] = useState(false);
+  const [deadlines, setDeadlines] = useState<UpcomingDeadline[]>(upcomingProjectDeadlines);
+  const [activities, setActivities] = useState<RecentProgressMetric[]>(recentAuditProgressMetrics);
+  const [dashboardChartTab, setDashboardChartTab] = useState<'compliance_pie' | 'severity_pie' | 'review_bars' | 'benchmarking' | 'both'>('compliance_pie');
+
+  // Real-time listener for company projects in Cloud Firestore
+  useEffect(() => {
+    let unsub: (() => void) | null = null;
+    try {
+      unsub = onSnapshot(collection(db, 'projects'), (snapshot) => {
+        if (!snapshot.empty) {
+          const loadedProjects: InfrastructureProject[] = [];
+          snapshot.forEach(doc => {
+            const data = doc.data() as any;
+            loadedProjects.push({
+              id: doc.id,
+              ...data,
+              isCompanyProject: data.isCompanyProject !== false
+            });
+          });
+          const loadedIds = new Set(loadedProjects.map(p => p.id));
+          const remainingSamples = activeInfrastructureProjects
+            .filter(p => !loadedIds.has(p.id))
+            .map(p => ({ ...p, isSampleData: true }));
+          setProjects([...loadedProjects, ...remainingSamples]);
+        }
+      }, (err) => {
+        console.warn('Real-time projects subscription fallback:', err);
+      });
+    } catch {
+      // non-fatal fallback
+    }
+    return () => {
+      if (unsub) unsub();
+    };
+  }, []);
+
+  // Filters & Search
+  const [selectedFramework, setSelectedFramework] = useState<GovernanceFramework>('ALL');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [selectedSector, setSelectedSector] = useState<string>('ALL');
+  const [selectedGate, setSelectedGate] = useState<string>('ALL');
+  const [selectedStatus, setSelectedStatus] = useState<string>('ALL');
+  const [deadlineUrgencyFilter, setDeadlineUrgencyFilter] = useState<string>('ALL');
+
+  // Available sectors based on active framework
+  const availableSectors = useMemo(() => {
+    const source = selectedFramework === 'ALL' ? projects : projects.filter(p => p.framework === selectedFramework);
+    const set = new Set(source.map(p => p.sector));
+    return ['ALL', ...Array.from(set)];
+  }, [projects, selectedFramework]);
+
+  // Interactive Modals
+  const [selectedProjectForModal, setSelectedProjectForModal] = useState<InfrastructureProject | null>(null);
+  const [isNewDeadlineModalOpen, setIsNewDeadlineModalOpen] = useState(false);
+  const [exportNotice, setExportNotice] = useState<string | null>(null);
+  const [isExportingPdf, setIsExportingPdf] = useState(false);
+  const [isWelcomeDismissed, setIsWelcomeDismissed] = useState<boolean>(true);
+
+  useEffect(() => {
+    try {
+      const dismissed = localStorage.getItem('gatekeeper_welcome_dismissed');
+      if (dismissed === 'true') {
+        setIsWelcomeDismissed(true);
+      } else {
+        setIsWelcomeDismissed(false);
+      }
+    } catch {
+      setIsWelcomeDismissed(false);
+    }
+  }, []);
+
+  const handleDismissWelcome = () => {
+    setIsWelcomeDismissed(true);
+    try {
+      localStorage.setItem('gatekeeper_welcome_dismissed', 'true');
+    } catch {}
+  };
+
+  const handleOpenUserGuide = () => {
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('open-user-guide'));
+    }
+  };
+
+  // New Deadline Form State
+  const [newDeadlineProject, setNewDeadlineProject] = useState(activeInfrastructureProjects[0].id);
+  const [newDeadlineTitle, setNewDeadlineTitle] = useState('');
+  const [newDeadlineCategory, setNewDeadlineCategory] = useState<UpcomingDeadline['category']>('Gateway Submission');
+  const [newDeadlineDate, setNewDeadlineDate] = useState('2026-10-31');
+  const [newDeadlineOwner, setNewDeadlineOwner] = useState('Lead Assurance Reviewer');
+  const [newDeadlineDescription, setNewDeadlineDescription] = useState('');
+
+  // Sorter state
+  const [sortBy, setSortBy] = useState<'score_desc' | 'score_asc' | 'date' | 'budget'>('date');
+
+  // Filtered Projects
+  const filteredProjects = useMemo(() => {
+    return projects.filter(proj => {
+      // Data Scope filter (Company projects vs Sample Sandbox)
+      if (dataScope === 'COMPANY' && !proj.isCompanyProject) return false;
+      if (dataScope === 'SAMPLE' && proj.isCompanyProject) return false;
+
+      if (selectedFramework !== 'ALL' && proj.framework && proj.framework !== selectedFramework) return false;
+      if (selectedSector !== 'ALL' && proj.sector !== selectedSector) return false;
+      if (selectedGate !== 'ALL' && proj.currentGate !== selectedGate) return false;
+      if (selectedStatus !== 'ALL' && proj.reviewStatus !== selectedStatus) return false;
+
+      if (searchQuery.trim()) {
+        const q = searchQuery.toLowerCase();
+        const matchName = proj.name.toLowerCase().includes(q);
+        const matchCode = proj.code.toLowerCase().includes(q);
+        const matchDept = proj.department.toLowerCase().includes(q);
+        const matchSro = proj.sro.toLowerCase().includes(q);
+        const matchLocation = proj.location.toLowerCase().includes(q);
+        if (!matchName && !matchCode && !matchDept && !matchSro && !matchLocation) {
+          return false;
+        }
+      }
+      return true;
+    }).sort((a, b) => {
+      if (sortBy === 'score_desc') return b.assuranceScore - a.assuranceScore;
+      if (sortBy === 'score_asc') return a.assuranceScore - b.assuranceScore;
+      if (sortBy === 'budget') {
+        const parseB = (val: string) => parseFloat(val.replace(/[^0-9.]/g, '')) || 0;
+        return parseB(b.budgetFormatted) - parseB(a.budgetFormatted);
+      }
+      // default: by next review date
+      const dateA = a.nextReviewDate ? new Date(a.nextReviewDate).getTime() : 0;
+      const dateB = b.nextReviewDate ? new Date(b.nextReviewDate).getTime() : 0;
+      return dateA - dateB;
+    });
+  }, [projects, dataScope, selectedFramework, selectedSector, selectedGate, selectedStatus, searchQuery, sortBy]);
+
+  const companyProjectsCount = useMemo(() => projects.filter(p => p.isCompanyProject).length, [projects]);
+  const sampleProjectsCount = useMemo(() => projects.filter(p => !p.isCompanyProject).length, [projects]);
+
+  // Filtered Deadlines
+  const filteredDeadlines = useMemo(() => {
+    return deadlines.filter(dl => {
+      if (selectedFramework !== 'ALL' && dl.framework && dl.framework !== selectedFramework) return false;
+      if (deadlineUrgencyFilter === 'ALL') return true;
+      if (deadlineUrgencyFilter === 'SOON') return dl.daysRemaining <= 14;
+      if (deadlineUrgencyFilter === 'GATEWAY') return dl.category === 'Gateway Submission';
+      if (deadlineUrgencyFilter === 'TREASURY') return dl.category === 'Treasury Approval';
+      if (deadlineUrgencyFilter === 'SUBMITTED') return dl.status === 'Submitted';
+      if (deadlineUrgencyFilter === 'PENDING') return dl.status !== 'Submitted';
+      return true;
+    }).sort((a, b) => a.daysRemaining - b.daysRemaining);
+  }, [deadlines, deadlineUrgencyFilter, selectedFramework]);
+
+  // Aggregate Portfolio Statistics
+  const portfolioMetrics = useMemo(() => {
+    const totalProjects = projects.length;
+    const totalRequirements = projects.reduce((acc, p) => acc + p.totalRequirements, 0);
+    const totalCompliant = projects.reduce((acc, p) => acc + p.compliantCount, 0);
+    const totalInProgress = projects.reduce((acc, p) => acc + p.inProgressCount, 0);
+    const totalFlagged = projects.reduce((acc, p) => acc + p.flaggedCount, 0);
+    const averageScore = Math.round(projects.reduce((acc, p) => acc + p.assuranceScore, 0) / (totalProjects || 1));
+    const upcoming14Days = deadlines.filter(d => d.daysRemaining <= 14 && d.status !== 'Submitted').length;
+    const criticalRisks = projects.reduce((acc, p) => acc + p.criticalRisksCount, 0);
+
+    return {
+      totalProjects,
+      totalRequirements,
+      totalCompliant,
+      totalInProgress,
+      totalFlagged,
+      averageScore,
+      upcoming14Days,
+      criticalRisks,
+      complianceRate: Math.round((totalCompliant / (totalRequirements || 1)) * 100)
+    };
+  }, [projects, deadlines]);
+
+  // Toggle deadline status
+  const handleToggleDeadlineStatus = (deadlineId: string) => {
+    setDeadlines(prev => prev.map(dl => {
+      if (dl.id !== deadlineId) return dl;
+      const nextStatus: UpcomingDeadline['status'] =
+        dl.status === 'Pending' ? 'In Progress' :
+        dl.status === 'In Progress' ? 'Submitted' : 'Pending';
+
+      // Log progress activity
+      const activityAction = nextStatus === 'Submitted'
+        ? `Marked statutory deliverable as Submitted: ${dl.title}`
+        : `Updated deliverable status to ${nextStatus}: ${dl.title}`;
+
+      const newActivity: RecentProgressMetric = {
+        id: `act_${Date.now()}`,
+        projectId: dl.projectId,
+        projectName: dl.projectName,
+        action: activityAction,
+        actor: 'Lead Assurance Reviewer (samgorleung1224@gmail.com)',
+        timestamp: 'Just now',
+        type: nextStatus === 'Submitted' ? 'Sign-off' : 'Status Update',
+        gate: dl.gate,
+        notesSnippet: `Updated deadline deliverable due on ${dl.dueDate}`
+      };
+
+      setActivities(curr => [newActivity, ...curr]);
+      return { ...dl, status: nextStatus };
+    }));
+  };
+
+  // Add new milestone deadline
+  const handleCreateDeadline = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newDeadlineTitle.trim()) return;
+
+    const proj = projects.find(p => p.id === newDeadlineProject) || projects[0];
+    const today = new Date('2026-09-22');
+    const target = new Date(newDeadlineDate);
+    const diffTime = target.getTime() - today.getTime();
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+
+    let urgency: UpcomingDeadline['urgency'] = 'Scheduled';
+    if (diffDays < 0) urgency = 'Overdue';
+    else if (diffDays <= 7) urgency = 'Due Soon';
+    else if (diffDays <= 14) urgency = 'Within 14 Days';
+
+    const newDl: UpcomingDeadline = {
+      id: `dl_${Date.now()}`,
+      projectId: proj.id,
+      projectName: proj.name,
+      title: newDeadlineTitle,
+      category: newDeadlineCategory,
+      dueDate: newDeadlineDate,
+      deadlineDate: newDeadlineDate,
+      daysRemaining: diffDays,
+      urgency,
+      gate: proj.gateLabel.split(':')[0].trim(),
+      leadOwner: newDeadlineOwner,
+      owner: newDeadlineOwner,
+      requiredItem: newDeadlineTitle,
+      status: 'Pending',
+      description: newDeadlineDescription || `Scheduled milestone for ${proj.name} under ${newDeadlineCategory}.`
+    };
+
+    setDeadlines(prev => [newDl, ...prev]);
+
+    // Record activity
+    setActivities(prev => [
+      {
+        id: `act_${Date.now()}`,
+        projectId: proj.id,
+        projectName: proj.name,
+        action: `Scheduled new milestone: ${newDeadlineTitle}`,
+        actor: 'Lead Assurance Reviewer',
+        timestamp: 'Just now',
+        type: 'Status Update',
+        gate: proj.currentGate,
+        notesSnippet: `Due ${newDeadlineDate} · Category: ${newDeadlineCategory}`
+      },
+      ...prev
+    ]);
+
+    // Reset and close
+    setNewDeadlineTitle('');
+    setNewDeadlineDescription('');
+    setIsNewDeadlineModalOpen(false);
+  };
+
+  // Handle new company project created via IngestCompanyProjectModal
+  const handleProjectCreated = (newProj: InfrastructureProject) => {
+    setProjects(prev => [newProj, ...prev.filter(p => p.id !== newProj.id)]);
+    setDataScope('COMPANY');
+    setExportNotice(`Successfully ingested "${newProj.name}". Switched to Company Projects view.`);
+    setTimeout(() => setExportNotice(null), 5000);
+  };
+
+  // Handle purging sample data to keep only company projects
+  const handlePurgeSampleData = () => {
+    const companyOnly = projects.filter(p => p.isCompanyProject);
+    setProjects(companyOnly);
+    setDataScope('COMPANY');
+    setIsPurgeConfirmOpen(false);
+    setExportNotice('Sample sandbox data purged. Displaying only internal company projects.');
+    setTimeout(() => setExportNotice(null), 4000);
+  };
+
+  // Reset all project filters
+  const handleResetFilters = () => {
+    setSearchQuery('');
+    setSelectedSector('ALL');
+    setSelectedGate('ALL');
+    setSelectedStatus('ALL');
+    setSortBy('date');
+  };
+
+  // Poll audit log source for new findings and progress activities every 30 seconds
+  const handlePollAuditLogs = useCallback(async () => {
+    try {
+      let countNew = 0;
+
+      // 1. Poll Firestore audit activities
+      try {
+        const remoteActivities = await getFirestoreAll('audit_activities');
+        if (Array.isArray(remoteActivities) && remoteActivities.length > 0) {
+          setActivities((prevActivities) => {
+            const existingIds = new Set(prevActivities.map(a => a.id));
+            const newEntries: RecentProgressMetric[] = [];
+
+            remoteActivities.forEach((rem: any) => {
+              if (!existingIds.has(rem.id)) {
+                countNew++;
+                newEntries.push({
+                  id: rem.id,
+                  projectId: rem.projectId || 'proj_01',
+                  projectName: rem.projectName || 'A428 Black Cat to Caxton Gibbet Improvement',
+                  action: rem.action || rem.summary || `Assurance review logged: ${rem.title || 'Audit check'}`,
+                  actor: rem.actor || rem.auditorName || 'Lead Assurance Reviewer (samgorleung1224@gmail.com)',
+                  timestamp: rem.timestamp ? new Date(rem.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Just now',
+                  type: rem.type || 'Compliance Check',
+                  gate: rem.gate || 'GATE_2',
+                  notesSnippet: rem.notes || rem.notesSnippet || rem.description || 'HM Treasury Green Book assurance criteria verified'
+                });
+              }
+            });
+
+            return newEntries.length > 0 ? [...newEntries, ...prevActivities] : prevActivities;
+          });
+        }
+      } catch (actErr) {
+        console.warn('[PortfolioDashboard] Poll audit_activities notice:', actErr);
+      }
+
+      // 2. Poll API evaluation findings to refresh project compliance counts
+      try {
+        const results = await fetchItems('result');
+        if (Array.isArray(results) && results.length > 0) {
+          const negCount = results.filter((r: any) => r.answer === 'Negative').length;
+          const posCount = results.filter((r: any) => r.answer === 'Positive').length;
+
+          setProjects(prev => prev.map((proj, idx) => {
+            if (idx === 0) {
+              const compCount = Math.max(posCount, proj.compliantCount);
+              const flagCount = Math.max(negCount, proj.flaggedCount);
+              const total = Math.max(proj.totalRequirements, compCount + flagCount);
+              return {
+                ...proj,
+                compliantCount: compCount,
+                flaggedCount: flagCount,
+                assuranceScore: Math.round((compCount / (total || 1)) * 100)
+              };
+            }
+            return proj;
+          }));
+        }
+      } catch (resErr) {
+        console.warn('[PortfolioDashboard] Poll findings results notice:', resErr);
+      }
+
+      return { newCount: countNew };
+    } catch (err) {
+      console.warn('[PortfolioDashboard] handlePollAuditLogs general error:', err);
+      return { newCount: 0 };
+    }
+  }, []);
+
+  // Export Executive Portfolio Compliance Summary as a formal PDF report
+  const handleExportCompliancePdf = async () => {
+    setIsExportingPdf(true);
+    setExportNotice('Synthesizing executive portfolio compliance summary and generating publication-grade PDF report...');
+    try {
+      await exportPortfolioCompliancePdf({
+        portfolioMetrics,
+        projects: filteredProjects,
+        deadlines: filteredDeadlines,
+        activities,
+        filtersApplied: {
+          sector: selectedSector,
+          gate: selectedGate,
+          status: selectedStatus,
+          searchQuery
+        },
+        auditor: {
+          name: 'Lead Assurance Reviewer',
+          email: 'samgorleung1224@gmail.com',
+          role: 'Principal Assurance Lead'
+        },
+        firestoreDbId: 'ai-studio-scout-d32152a8-4a4e-4ea6-84c3-214b5ae51fa5'
+      });
+      setExportNotice('✓ Executive Portfolio Compliance Summary PDF report generated and downloaded successfully.');
+      setTimeout(() => {
+        setExportNotice(null);
+      }, 5000);
+    } catch (err) {
+      console.error('Failed to generate compliance summary PDF report:', err);
+      setExportNotice('Notice: Unable to generate PDF report. Please verify browser allows downloads.');
+      setTimeout(() => {
+        setExportNotice(null);
+      }, 5000);
+    } finally {
+      setIsExportingPdf(false);
+    }
+  };
+
+  // Export Individual Infrastructure Project Compliance Audit as PDF
+  const handleExportSingleProjectPdf = async (project: InfrastructureProject) => {
+    setIsExportingPdf(true);
+    try {
+      const completionRate = Math.round((project.compliantCount / (project.totalRequirements || 1)) * 100);
+      await exportComplianceAuditPdf({
+        projectName: `${project.code}: ${project.name}`,
+        currentGate: project.currentGate,
+        auditor: {
+          name: project.leadAuditor || 'Lead Assurance Reviewer',
+          email: 'samgorleung1224@gmail.com',
+          role: 'Principal Assurance Lead'
+        },
+        metrics: {
+          total: project.totalRequirements,
+          checked: project.compliantCount,
+          percentage: completionRate,
+          compliant: project.compliantCount,
+          inProgress: project.inProgressCount,
+          flagged: project.flaggedCount,
+          remainingCount: project.totalRequirements - project.compliantCount,
+          readinessText: project.reviewStatus
+        },
+        categoryBreakdown: [
+          {
+            category: 'Financial & Commercial Case',
+            total: Math.ceil(project.totalRequirements * 0.35),
+            checked: Math.ceil(project.compliantCount * 0.35),
+            compliant: Math.ceil(project.compliantCount * 0.35),
+            flagged: Math.ceil(project.flaggedCount * 0.4),
+            percentage: completionRate
+          },
+          {
+            category: 'Delivery Capability & Schedule',
+            total: Math.ceil(project.totalRequirements * 0.35),
+            checked: Math.ceil(project.compliantCount * 0.35),
+            compliant: Math.ceil(project.compliantCount * 0.35),
+            flagged: Math.ceil(project.flaggedCount * 0.3),
+            percentage: completionRate
+          },
+          {
+            category: 'Risk Management & Governance',
+            total: Math.floor(project.totalRequirements * 0.3),
+            checked: Math.floor(project.compliantCount * 0.3),
+            compliant: Math.floor(project.compliantCount * 0.3),
+            flagged: Math.floor(project.flaggedCount * 0.3),
+            percentage: completionRate
+          }
+        ],
+        requirements: [
+          {
+            id: `${project.code}_REQ_01`,
+            code: `${project.code}-01`,
+            title: `${project.name} Statutory Gateway Evidence Submission`,
+            description: `Statutory Gateway documentation reviewed for ${project.department}. Current review status: ${project.reviewStatus}.`,
+            gate: project.currentGate,
+            category: 'Governance & Assurance',
+            priority: 'Critical',
+            status: project.flaggedCount > 0 ? 'Flagged' : 'Compliant',
+            isChecked: project.compliantCount > 0,
+            evidenceThreshold: 'Full Outline Business Case with Accounting Officer sign-off and Green Book compliance.',
+            documentRef: `${project.code}_Dossier_Gateway_Review.pdf`,
+            auditorNotes: `Evaluated by ${project.leadAuditor}. Capital value: ${project.budgetFormatted}. Next statutory review: ${project.nextReviewDate}.`,
+            auditedAt: new Date().toISOString(),
+            auditorName: project.leadAuditor
+          }
+        ],
+        firestoreDbId: 'ai-studio-scout-d32152a8-4a4e-4ea6-84c3-214b5ae51fa5'
+      });
+      setExportNotice(`✓ Compliance audit report for ${project.code} downloaded successfully.`);
+      setTimeout(() => setExportNotice(null), 5000);
+    } catch (err) {
+      console.error('Failed to export single project compliance PDF:', err);
+      setExportNotice('Notice: Unable to generate project PDF report.');
+      setTimeout(() => setExportNotice(null), 5000);
+    } finally {
+      setIsExportingPdf(false);
+    }
+  };
+
+  const handleExportBriefing = () => {
+    handleExportCompliancePdf();
+  };
+
+  return (
+    <div style={{ maxWidth: '1440px', margin: '0 auto', paddingBottom: '60px' }}>
+      {/* Initial Onboarding Banner */}
+      {(!companyProfile.isConfigured || companyProjectsCount === 0) && (
+        <div style={{
+          backgroundColor: '#eff6ff',
+          border: '1px solid #bfdbfe',
+          borderRadius: '12px',
+          padding: '18px 24px',
+          marginBottom: '20px',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: '16px',
+          flexWrap: 'wrap',
+          boxShadow: '0 2px 4px rgba(29, 112, 184, 0.08)'
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+            <div style={{
+              width: '42px',
+              height: '42px',
+              borderRadius: '10px',
+              backgroundColor: '#1d70b8',
+              color: '#ffffff',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              flexShrink: 0
+            }}>
+              <ProjectIcon style={{ fontSize: '1.4rem' }} />
+            </div>
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                <h3 style={{ fontSize: '1rem', fontWeight: 700, color: '#0f172a', margin: 0 }}>
+                  Set Up Your Company Profile & Initial Project
+                </h3>
+                <span style={{ fontSize: '0.7rem', fontWeight: 700, padding: '2px 8px', borderRadius: '9999px', backgroundColor: '#3b82f6', color: '#ffffff' }}>
+                  ONBOARDING SETUP
+                </span>
+              </div>
+              <p style={{ margin: '4px 0 0 0', fontSize: '0.85rem', color: '#334155' }}>
+                Input your enterprise governance profile and target system specifications before starting stage-gate assurance.
+              </p>
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
+            <button
+              type="button"
+              onClick={() => setIsSetupModalOpen(true)}
+              style={{
+                padding: '9px 18px',
+                borderRadius: '8px',
+                backgroundColor: '#1d70b8',
+                color: '#ffffff',
+                fontWeight: 700,
+                fontSize: '0.85rem',
+                border: 'none',
+                cursor: 'pointer',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px',
+                boxShadow: '0 2px 4px rgba(29, 112, 184, 0.25)'
+              }}
+            >
+              <ProjectIcon style={{ fontSize: '1rem' }} />
+              <span>Configure Company Data</span>
+            </button>
+            <button
+              type="button"
+              onClick={loadDemoCompany}
+              style={{
+                padding: '9px 16px',
+                borderRadius: '8px',
+                backgroundColor: '#ffffff',
+                color: '#475569',
+                fontWeight: 600,
+                fontSize: '0.85rem',
+                border: '1px solid #cbd5e1',
+                cursor: 'pointer'
+              }}
+            >
+              Explore Demo Mode
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* 1. Header & Lead Contract */}
+      <motion.div
+        initial={{ opacity: 0, y: 14 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
+        style={{
+          backgroundColor: '#ffffff',
+          border: '1px solid #e2e8f0',
+          borderRadius: '12px',
+          padding: '24px 28px',
+          marginBottom: '24px',
+          boxShadow: '0 1px 3px 0 rgba(15, 23, 42, 0.04)'
+        }}
+      >
+        {/* Breadcrumb Trail */}
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: '8px',
+          fontSize: '0.8125rem',
+          color: '#64748b',
+          marginBottom: '10px'
+        }}>
+          <span>GateKeeper Enterprise</span>
+          <span>/</span>
+          <span>{FRAMEWORK_CONFIGS[selectedFramework].badge}</span>
+          <span>/</span>
+          <span style={{ color: '#0f172a', fontWeight: 600 }}>{FRAMEWORK_CONFIGS[selectedFramework].shortLabel} Assurance Hub</span>
+        </div>
+
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '16px' }}>
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '6px' }}>
+              <span style={{ fontSize: '1.75rem' }}>{FRAMEWORK_CONFIGS[selectedFramework].icon}</span>
+              <h1 style={{
+                fontSize: '1.75rem',
+                fontWeight: 800,
+                color: '#0f172a',
+                margin: 0,
+                letterSpacing: '-0.02em'
+              }}>
+                {selectedFramework === 'ALL'
+                  ? 'Enterprise Project Compliance & Audit Hub'
+                  : `${FRAMEWORK_CONFIGS[selectedFramework].label} Assurance`}
+              </h1>
+            </div>
+            <p style={{
+              fontSize: '0.9375rem',
+              color: '#475569',
+              margin: 0,
+              maxWidth: '860px',
+              lineHeight: 1.5
+            }}>
+              {FRAMEWORK_CONFIGS[selectedFramework].tagline}
+            </p>
+          </div>
+
+          {/* Quick Header Actions */}
+          <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
+            <button
+              onClick={() => setIsIngestModalOpen(true)}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px',
+                padding: '8px 18px',
+                backgroundColor: '#1d70b8',
+                color: '#ffffff',
+                border: 'none',
+                borderRadius: '6px',
+                fontSize: '0.85rem',
+                fontWeight: 700,
+                cursor: 'pointer',
+                boxShadow: '0 2px 4px rgba(29, 112, 184, 0.3)',
+                transition: 'all 0.15s ease'
+              }}
+            >
+              <AddIcon style={{ fontSize: '1.1rem' }} />
+              <span>+ Ingest Company Project</span>
+            </button>
+
+            <Link href="/compliance-tracker?view=timeline" prefetch={false} passHref legacyBehavior>
+              <a
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  padding: '8px 16px',
+                  backgroundColor: '#ffffff',
+                  border: '1px solid #cbd5e1',
+                  borderRadius: '6px',
+                  fontSize: '0.85rem',
+                  fontWeight: 600,
+                  color: '#1e293b',
+                  textDecoration: 'none',
+                  cursor: 'pointer',
+                  transition: 'all 0.15s ease'
+                }}
+              >
+                <TimelineIcon style={{ fontSize: '1rem', color: '#1d70b8' }} />
+                <span>Transition Timelines</span>
+              </a>
+            </Link>
+
+            <button
+              onClick={() => setIsNewDeadlineModalOpen(true)}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px',
+                padding: '8px 16px',
+                backgroundColor: '#ffffff',
+                border: '1px solid #cbd5e1',
+                borderRadius: '6px',
+                fontSize: '0.85rem',
+                fontWeight: 600,
+                color: '#1e293b',
+                cursor: 'pointer',
+                transition: 'all 0.15s ease'
+              }}
+            >
+              <AddIcon style={{ fontSize: '1rem', color: '#1d70b8' }} />
+              <span>Add Upcoming Deadline</span>
+            </button>
+
+            {/* Auto-Refresh Toggle (30s polling) */}
+            <AutoRefreshToggle
+              intervalSeconds={30}
+              onPoll={handlePollAuditLogs}
+              label="Audit Polling (30s)"
+              storageKey="gatekeeper_dashboard_auto_refresh"
+            />
+
+            {/* Download PDF via browser print-to-PDF styles */}
+            <button
+              type="button"
+              onClick={() => {
+                window.print();
+              }}
+              title="Download audit findings and portfolio compliance view as PDF using browser print media styles"
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px',
+                padding: '8px 16px',
+                backgroundColor: '#ffffff',
+                border: '1px solid #cbd5e1',
+                borderRadius: '6px',
+                fontSize: '0.85rem',
+                fontWeight: 600,
+                color: '#0f172a',
+                cursor: 'pointer',
+                boxShadow: '0 1px 2px rgba(0, 0, 0, 0.05)',
+                transition: 'all 0.15s ease'
+              }}
+            >
+              <PdfIcon style={{ fontSize: '1.05rem', color: '#dc2626' }} />
+              <span>Download PDF</span>
+            </button>
+
+            <button
+              onClick={handleExportCompliancePdf}
+              disabled={isExportingPdf}
+              title="Export current portfolio compliance summary data as an executive PDF report"
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '8px',
+                padding: '8px 18px',
+                backgroundColor: isExportingPdf ? '#94a3b8' : '#1d70b8',
+                border: 'none',
+                borderRadius: '6px',
+                fontSize: '0.85rem',
+                fontWeight: 600,
+                color: '#ffffff',
+                cursor: isExportingPdf ? 'wait' : 'pointer',
+                boxShadow: '0 1px 2px rgba(0, 0, 0, 0.05)',
+                transition: 'all 0.15s ease'
+              }}
+            >
+              <PdfIcon style={{ fontSize: '1.05rem' }} />
+              <span>{isExportingPdf ? 'Generating PDF...' : 'Export Compliance Summary (PDF)'}</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Data Scope & Sandbox Mode Strip */}
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: '12px',
+          marginTop: '16px',
+          padding: '10px 16px',
+          backgroundColor: '#f1f5f9',
+          borderRadius: '8px',
+          border: '1px solid #e2e8f0',
+          flexWrap: 'wrap'
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+            <span style={{ fontSize: '0.75rem', fontWeight: 800, color: '#334155', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+              Project Scope:
+            </span>
+            <button
+              type="button"
+              onClick={() => setDataScope('ALL')}
+              style={{
+                padding: '4px 12px',
+                borderRadius: '6px',
+                fontSize: '0.78125rem',
+                fontWeight: dataScope === 'ALL' ? 700 : 500,
+                backgroundColor: dataScope === 'ALL' ? '#0f172a' : '#ffffff',
+                color: dataScope === 'ALL' ? '#ffffff' : '#475569',
+                border: '1px solid ' + (dataScope === 'ALL' ? '#0f172a' : '#cbd5e1'),
+                cursor: 'pointer'
+              }}
+            >
+              All Projects ({projects.length})
+            </button>
+            <button
+              type="button"
+              onClick={() => setDataScope('COMPANY')}
+              style={{
+                padding: '4px 12px',
+                borderRadius: '6px',
+                fontSize: '0.78125rem',
+                fontWeight: dataScope === 'COMPANY' ? 700 : 500,
+                backgroundColor: dataScope === 'COMPANY' ? '#1d70b8' : '#ffffff',
+                color: dataScope === 'COMPANY' ? '#ffffff' : '#475569',
+                border: '1px solid ' + (dataScope === 'COMPANY' ? '#1d70b8' : '#cbd5e1'),
+                cursor: 'pointer',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '5px'
+              }}
+            >
+              <span>🏢</span>
+              <span>{companyProfile.companyName ? `${companyProfile.companyName} (${companyProjectsCount})` : `My Company Projects (${companyProjectsCount})`}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setDataScope('SAMPLE')}
+              style={{
+                padding: '4px 12px',
+                borderRadius: '6px',
+                fontSize: '0.78125rem',
+                fontWeight: dataScope === 'SAMPLE' ? 700 : 500,
+                backgroundColor: dataScope === 'SAMPLE' ? '#0d9488' : '#ffffff',
+                color: dataScope === 'SAMPLE' ? '#ffffff' : '#475569',
+                border: '1px solid ' + (dataScope === 'SAMPLE' ? '#0d9488' : '#cbd5e1'),
+                cursor: 'pointer',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '5px'
+              }}
+            >
+              <span>🧪</span>
+              <span>Sample Sandbox ({sampleProjectsCount})</span>
+            </button>
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <button
+              type="button"
+              onClick={() => setIsSetupModalOpen(true)}
+              title="Edit Company Profile & Compliance Frameworks"
+              style={{
+                padding: '4px 12px',
+                backgroundColor: '#ffffff',
+                border: '1px solid #cbd5e1',
+                borderRadius: '6px',
+                color: '#334155',
+                fontSize: '0.75rem',
+                fontWeight: 600,
+                cursor: 'pointer',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '5px',
+                transition: 'all 0.15s ease'
+              }}
+            >
+              <span>🏢</span>
+              <span>Company Settings</span>
+            </button>
+            {sampleProjectsCount > 0 && (
+              <button
+                type="button"
+                onClick={() => setIsPurgeConfirmOpen(true)}
+                title="Wipe sample sandbox projects to leave only company records"
+                style={{
+                  padding: '4px 10px',
+                  backgroundColor: 'transparent',
+                  border: '1px dashed #94a3b8',
+                  borderRadius: '6px',
+                  color: '#64748b',
+                  fontSize: '0.75rem',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  transition: 'all 0.15s ease'
+                }}
+              >
+                Purge Sample Sandbox
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Interactive Governance Framework Switcher */}
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: '12px',
+          marginTop: '20px',
+          padding: '12px 18px',
+          backgroundColor: '#ffffff',
+          borderRadius: '12px',
+          border: '1px solid #e2e8f0',
+          boxShadow: '0 1px 3px rgba(0,0,0,0.03)',
+          flexWrap: 'wrap'
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <span style={{ fontSize: '0.8125rem', fontWeight: 700, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+              Assurance Focus:
+            </span>
+            <span style={{ fontSize: '0.75rem', color: '#64748b' }}>
+              Select organizational framework mode or view unified portfolio
+            </span>
+          </div>
+          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+            {(['ALL', 'SECURITY_GDPR', 'AI_GOVERNANCE', 'ENTERPRISE_PMO'] as GovernanceFramework[]).map((fwKey) => {
+              const cfg = FRAMEWORK_CONFIGS[fwKey];
+              const isSelected = selectedFramework === fwKey;
+              return (
+                <button
+                  key={fwKey}
+                  type="button"
+                  onClick={() => {
+                    setSelectedFramework(fwKey);
+                    setSelectedSector('ALL');
+                    setSelectedGate('ALL');
+                  }}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    padding: '8px 16px',
+                    borderRadius: '8px',
+                    fontSize: '0.85rem',
+                    fontWeight: isSelected ? 700 : 500,
+                    color: isSelected ? '#ffffff' : '#334155',
+                    backgroundColor: isSelected
+                      ? (fwKey === 'SECURITY_GDPR' ? '#0f766e' : fwKey === 'AI_GOVERNANCE' ? '#6d28d9' : fwKey === 'ENTERPRISE_PMO' ? '#b45309' : '#1e293b')
+                      : '#f8fafc',
+                    border: `1px solid ${isSelected ? 'transparent' : '#cbd5e1'}`,
+                    cursor: 'pointer',
+                    transition: 'all 0.15s ease',
+                    boxShadow: isSelected ? '0 2px 4px rgba(0,0,0,0.1)' : 'none'
+                  }}
+                >
+                  <span>{cfg.icon}</span>
+                  <span>{cfg.shortLabel}</span>
+                  <span style={{
+                    fontSize: '0.7rem',
+                    padding: '2px 6px',
+                    borderRadius: '999px',
+                    backgroundColor: isSelected ? 'rgba(255,255,255,0.25)' : '#e2e8f0',
+                    color: isSelected ? '#ffffff' : '#475569',
+                    fontWeight: 600
+                  }}>
+                    {fwKey === 'ALL' ? projects.length : projects.filter(p => p.framework === fwKey).length}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Real-time Keyword Search Across Audit Findings (Criterion, Sources) in Header */}
+        <div style={{
+          marginTop: '20px',
+          paddingTop: '16px',
+          borderTop: '1px solid #f1f5f9',
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          flexWrap: 'wrap',
+          gap: '14px'
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <span style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '6px',
+              fontSize: '0.8125rem',
+              fontWeight: 700,
+              color: '#0f172a'
+            }}>
+              <SearchIcon style={{ fontSize: '1rem', color: '#1d70b8' }} />
+              Audit Findings Real-Time Search:
+            </span>
+            <span style={{ fontSize: '0.75rem', color: '#64748b' }}>
+              Query assurance criteria, question scopes, and cited document sources in real-time
+            </span>
+          </div>
+
+          <DashboardAuditFindingsSearch
+            placeholder="Search findings (Criterion question, category, or cited Sources)..."
+            style={{ maxWidth: '440px', minWidth: '300px' }}
+          />
+        </div>
+
+        {/* Export Notification Toast */}
+        {exportNotice && (
+          <div style={{
+            marginTop: '16px',
+            padding: '10px 16px',
+            backgroundColor: '#f0fdf4',
+            border: '1px solid #86efac',
+            borderRadius: '6px',
+            color: '#15803d',
+            fontSize: '0.85rem',
+            fontWeight: 500,
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px'
+          }}>
+            <CheckIcon style={{ fontSize: '1.1rem' }} />
+            <span>{exportNotice}</span>
+          </div>
+        )}
+
+        {/* First-Time User Onboarding & Quick-Start Playbook Banner (Dismissible) */}
+        {!isWelcomeDismissed && (
+          <div style={{
+            marginTop: '16px',
+            padding: '16px 20px',
+            backgroundColor: '#f0fdfa',
+            backgroundImage: 'linear-gradient(to right, #f0fdfa, #eff6ff)',
+            border: '1px solid #99f6e4',
+            borderRadius: '10px',
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            flexWrap: 'wrap',
+            gap: '14px',
+            boxShadow: '0 1px 3px rgba(13, 148, 136, 0.08)'
+          }}>
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px', flex: '1 1 500px' }}>
+              <div style={{
+                width: '36px',
+                height: '36px',
+                borderRadius: '8px',
+                backgroundColor: '#0d9488',
+                color: '#ffffff',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                flexShrink: 0
+              }}>
+                <BookIcon style={{ fontSize: '1.25rem' }} />
+              </div>
+              <div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                  <h3 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 800, color: '#0f172a' }}>
+                    Welcome to GateKeeper Enterprise: Stage-Gate Assurance Platform
+                  </h3>
+                  <span style={{
+                    padding: '2px 8px',
+                    borderRadius: '4px',
+                    backgroundColor: '#ccfbf1',
+                    color: '#0f766e',
+                    fontSize: '0.7rem',
+                    fontWeight: 700
+                  }}>
+                    Quick Start Guide
+                  </span>
+                </div>
+                <p style={{ margin: '4px 0 0 0', fontSize: '0.8125rem', color: '#334155', lineHeight: 1.45 }}>
+                  Auditing <strong>{projects.length} enterprise projects</strong> across Security & GDPR, AI & Data Launch, and Corporate PMO against stage-gate criteria (Gates 0–5) and regulatory compliance standards. Follow the 4-step workflow to evaluate evidence, inspect findings, and export official Gateway Assurance Packs.
+                </p>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+              <button
+                type="button"
+                onClick={handleOpenUserGuide}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  padding: '7px 14px',
+                  backgroundColor: '#0d9488',
+                  border: '1px solid #0d9488',
+                  borderRadius: '6px',
+                  color: '#ffffff',
+                  fontSize: '0.8125rem',
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                  boxShadow: '0 1px 2px rgba(13, 148, 136, 0.25)',
+                  transition: 'all 0.15s ease'
+                }}
+              >
+                <BookIcon style={{ fontSize: '1rem' }} />
+                <span>Open User Guide & Playbook</span>
+              </button>
+
+              <Link href="/project-dashboard" passHref legacyBehavior>
+                <a style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  padding: '7px 14px',
+                  backgroundColor: '#ffffff',
+                  border: '1px solid #cbd5e1',
+                  borderRadius: '6px',
+                  color: '#1e293b',
+                  fontSize: '0.8125rem',
+                  fontWeight: 600,
+                  textDecoration: 'none',
+                  transition: 'all 0.15s ease'
+                }}>
+                  <span>Project Console</span>
+                  <ArrowIcon style={{ fontSize: '0.9rem', color: '#64748b' }} />
+                </a>
+              </Link>
+
+              <button
+                type="button"
+                onClick={handleDismissWelcome}
+                title="Dismiss welcome banner"
+                aria-label="Dismiss welcome banner"
+                style={{
+                  border: 'none',
+                  backgroundColor: 'transparent',
+                  color: '#64748b',
+                  cursor: 'pointer',
+                  padding: '4px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  borderRadius: '4px'
+                }}
+              >
+                <CloseIcon style={{ fontSize: '1.1rem' }} />
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Clean Unboxed Metadata Strip */}
+        <div style={{
+          display: 'flex',
+          flexWrap: 'wrap',
+          alignItems: 'center',
+          gap: '8px',
+          marginTop: '16px',
+          paddingTop: '14px',
+          borderTop: '1px solid #f1f5f9',
+          fontSize: '0.8125rem',
+          color: '#64748b'
+        }}>
+          <span style={{ fontWeight: 600, color: '#0f172a' }}>Standard:</span>
+          <span>GateKeeper Enterprise Stage-Gate Assurance Framework 2026</span>
+          <span aria-hidden="true">·</span>
+          <span style={{ fontWeight: 600, color: '#0f172a' }}>Database:</span>
+          <span style={{ fontFamily: 'monospace' }}>GateKeeper Cloud Vault</span>
+          <span aria-hidden="true">·</span>
+          <span style={{ fontWeight: 600, color: '#0f172a' }}>Assurance Officer:</span>
+          <span>{companyProfile.dpoOrSroEmail || companyProfile.dpoOrSroName || 'Enterprise Lead Reviewer'}</span>
+          <span aria-hidden="true">·</span>
+          <span style={{ fontWeight: 600, color: '#0f172a' }}>Active Portfolio:</span>
+          <span>{projects.length} Major Initiatives</span>
+        </div>
+      </motion.div>
+
+      {/* 2. Portfolio Key Performance Indicator Strip (Single-Elevation Cards with Staggered Entrance) */}
+      <motion.div
+        initial="hidden"
+        animate="show"
+        variants={{
+          hidden: { opacity: 0 },
+          show: {
+            opacity: 1,
+            transition: {
+              staggerChildren: 0.06
+            }
+          }
+        }}
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+          gap: '16px',
+          marginBottom: '24px'
+        }}
+      >
+        {/* Metric 1: Active Reviews */}
+        <motion.div
+          variants={{
+            hidden: { opacity: 0, y: 12 },
+            show: { opacity: 1, y: 0, transition: { duration: 0.38, ease: [0.16, 1, 0.3, 1] } }
+          }}
+          whileHover={{ y: -2, boxShadow: '0 4px 6px -1px rgba(15, 23, 42, 0.08)' }}
+          transition={{ duration: 0.15 }}
+          style={{
+            backgroundColor: '#ffffff',
+            border: '1px solid #e2e8f0',
+            borderRadius: '10px',
+            padding: '18px 20px',
+            boxShadow: '0 1px 2px rgba(15, 23, 42, 0.03)'
+          }}
+        >
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+            <span style={{ fontSize: '0.8125rem', fontWeight: 600, color: '#64748b' }}>ACTIVE REVIEWS</span>
+            <ProjectIcon style={{ fontSize: '1.2rem', color: '#1d70b8' }} />
+          </div>
+          <div style={{ fontSize: '1.75rem', fontWeight: 700, color: '#0f172a', fontFamily: 'monospace', letterSpacing: '-0.02em' }}>
+            {portfolioMetrics.totalProjects}
+          </div>
+          <div style={{ fontSize: '0.75rem', color: '#64748b', marginTop: '4px' }}>
+            Across Transport, Energy, Health & Defence
+          </div>
+        </motion.div>
+
+        {/* Metric 2: Assurance Fulfillment */}
+        <motion.div
+          variants={{
+            hidden: { opacity: 0, y: 12 },
+            show: { opacity: 1, y: 0, transition: { duration: 0.38, ease: [0.16, 1, 0.3, 1] } }
+          }}
+          whileHover={{ y: -2, boxShadow: '0 4px 6px -1px rgba(15, 23, 42, 0.08)' }}
+          transition={{ duration: 0.15 }}
+          style={{
+            backgroundColor: '#ffffff',
+            border: '1px solid #e2e8f0',
+            borderRadius: '10px',
+            padding: '18px 20px',
+            boxShadow: '0 1px 2px rgba(15, 23, 42, 0.03)'
+          }}
+        >
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+            <span style={{ fontSize: '0.8125rem', fontWeight: 600, color: '#64748b' }}>AVG ASSURANCE SCORE</span>
+            <TrendingUpIcon style={{ fontSize: '1.2rem', color: '#16a34a' }} />
+          </div>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: '6px' }}>
+            <span style={{ fontSize: '1.75rem', fontWeight: 700, color: '#0f172a', fontFamily: 'monospace', letterSpacing: '-0.02em' }}>
+              {portfolioMetrics.averageScore}%
+            </span>
+            <span style={{ fontSize: '0.8125rem', color: '#16a34a', fontWeight: 600 }}>
+              {portfolioMetrics.averageScore >= 80 ? '✓ Ready' : 'Target: 80%'}
+            </span>
+          </div>
+          {/* Linear Progress Bar */}
+          <div style={{
+            height: '6px',
+            backgroundColor: '#e2e8f0',
+            borderRadius: '3px',
+            marginTop: '8px',
+            overflow: 'hidden'
+          }}>
+            <div style={{
+              width: `${portfolioMetrics.averageScore}%`,
+              height: '100%',
+              backgroundColor: portfolioMetrics.averageScore >= 80 ? '#16a34a' : '#1d70b8'
+            }} />
+          </div>
+        </motion.div>
+
+        {/* Metric 3: Requirements Verified */}
+        <motion.div
+          variants={{
+            hidden: { opacity: 0, y: 12 },
+            show: { opacity: 1, y: 0, transition: { duration: 0.38, ease: [0.16, 1, 0.3, 1] } }
+          }}
+          whileHover={{ y: -2, boxShadow: '0 4px 6px -1px rgba(15, 23, 42, 0.08)' }}
+          transition={{ duration: 0.15 }}
+          style={{
+            backgroundColor: '#ffffff',
+            border: '1px solid #e2e8f0',
+            borderRadius: '10px',
+            padding: '18px 20px',
+            boxShadow: '0 1px 2px rgba(15, 23, 42, 0.03)'
+          }}
+        >
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+            <span style={{ fontSize: '0.8125rem', fontWeight: 600, color: '#64748b' }}>VERIFIED CRITERIA</span>
+            <VerifiedIcon style={{ fontSize: '1.2rem', color: '#16a34a' }} />
+          </div>
+          <div style={{ fontSize: '1.75rem', fontWeight: 700, color: '#0f172a', fontFamily: 'monospace', letterSpacing: '-0.02em' }}>
+            {portfolioMetrics.totalCompliant} <span style={{ fontSize: '1rem', color: '#94a3b8', fontWeight: 400 }}>/ {portfolioMetrics.totalRequirements}</span>
+          </div>
+          <div style={{ fontSize: '0.75rem', color: '#64748b', marginTop: '4px' }}>
+            {portfolioMetrics.totalInProgress} In Progress · {portfolioMetrics.totalFlagged} Flagged
+          </div>
+        </motion.div>
+
+        {/* Metric 4: Deadlines within 14 Days */}
+        <motion.div
+          variants={{
+            hidden: { opacity: 0, y: 12 },
+            show: { opacity: 1, y: 0, transition: { duration: 0.38, ease: [0.16, 1, 0.3, 1] } }
+          }}
+          whileHover={{ y: -2, boxShadow: '0 4px 6px -1px rgba(15, 23, 42, 0.08)' }}
+          transition={{ duration: 0.15 }}
+          style={{
+            backgroundColor: '#ffffff',
+            border: '1px solid #e2e8f0',
+            borderRadius: '10px',
+            padding: '18px 20px',
+            boxShadow: '0 1px 2px rgba(15, 23, 42, 0.03)'
+          }}
+        >
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+            <span style={{ fontSize: '0.8125rem', fontWeight: 600, color: '#64748b' }}>DUE SOON (≤ 14 DAYS)</span>
+            <CalendarIcon style={{ fontSize: '1.2rem', color: '#d97706' }} />
+          </div>
+          <div style={{ fontSize: '1.75rem', fontWeight: 700, color: '#0f172a', fontFamily: 'monospace', letterSpacing: '-0.02em' }}>
+            {portfolioMetrics.upcoming14Days}
+          </div>
+          <div style={{ fontSize: '0.75rem', color: '#d97706', marginTop: '4px', fontWeight: 500 }}>
+            Immediate statutory submission deliverables
+          </div>
+        </motion.div>
+
+        {/* Metric 5: Flagged Critical Risks */}
+        <motion.div
+          variants={{
+            hidden: { opacity: 0, y: 12 },
+            show: { opacity: 1, y: 0, transition: { duration: 0.38, ease: [0.16, 1, 0.3, 1] } }
+          }}
+          whileHover={{ y: -2, boxShadow: '0 4px 6px -1px rgba(15, 23, 42, 0.08)' }}
+          transition={{ duration: 0.15 }}
+          style={{
+            backgroundColor: '#ffffff',
+            border: '1px solid #e2e8f0',
+            borderRadius: '10px',
+            padding: '18px 20px',
+            boxShadow: '0 1px 2px rgba(15, 23, 42, 0.03)'
+          }}
+        >
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+            <span style={{ fontSize: '0.8125rem', fontWeight: 600, color: '#64748b' }}>CRITICAL RISKS</span>
+            <WarningIcon style={{ fontSize: '1.2rem', color: '#dc2626' }} />
+          </div>
+          <div style={{ fontSize: '1.75rem', fontWeight: 700, color: '#dc2626', fontFamily: 'monospace', letterSpacing: '-0.02em' }}>
+            {portfolioMetrics.criticalRisks}
+          </div>
+          <div style={{ fontSize: '0.75rem', color: '#64748b', marginTop: '4px' }}>
+            Across {projects.filter(p => p.criticalRisksCount > 0).length} projects requiring mitigation
+          </div>
+        </motion.div>
+      </motion.div>
+
+      {/* 3. Visual Analytics Hub: Recharts Compliance Status Pie Chart & D3 Review Distribution */}
+      <div style={{
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        flexWrap: 'wrap',
+        gap: '12px',
+        marginBottom: '16px',
+        padding: '10px 16px',
+        backgroundColor: '#ffffff',
+        border: '1px solid #e2e8f0',
+        borderRadius: '10px',
+        boxShadow: '0 1px 2px rgba(15, 23, 42, 0.02)'
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <span style={{ fontSize: '0.85rem', fontWeight: 700, color: '#0f172a' }}>
+            Stakeholder Visual Analytics:
+          </span>
+          <span style={{ fontSize: '0.78125rem', color: '#64748b' }}>
+            Select visualization engine for project compliance and assurance reporting
+          </span>
+        </div>
+
+        <div style={{
+          display: 'inline-flex',
+          backgroundColor: '#f1f5f9',
+          padding: '3px',
+          borderRadius: '8px',
+          border: '1px solid #e2e8f0'
+        }}>
+          <button
+            onClick={() => setDashboardChartTab('compliance_pie')}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '6px',
+              padding: '6px 14px',
+              fontSize: '0.78125rem',
+              fontWeight: dashboardChartTab === 'compliance_pie' ? 700 : 500,
+              backgroundColor: dashboardChartTab === 'compliance_pie' ? '#ffffff' : 'transparent',
+              color: dashboardChartTab === 'compliance_pie' ? '#0f172a' : '#64748b',
+              border: 'none',
+              borderRadius: '6px',
+              cursor: 'pointer',
+              boxShadow: dashboardChartTab === 'compliance_pie' ? '0 1px 2px rgba(0,0,0,0.06)' : 'none',
+              transition: 'all 0.15s ease'
+            }}
+          >
+            <PieChartIcon style={{ fontSize: '1rem', color: '#10b981' }} />
+            <span>Compliance Items (Recharts Pie)</span>
+          </button>
+
+          <button
+            onClick={() => setDashboardChartTab('severity_pie')}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '6px',
+              padding: '6px 14px',
+              fontSize: '0.78125rem',
+              fontWeight: dashboardChartTab === 'severity_pie' ? 700 : 500,
+              backgroundColor: dashboardChartTab === 'severity_pie' ? '#ffffff' : 'transparent',
+              color: dashboardChartTab === 'severity_pie' ? '#0f172a' : '#64748b',
+              border: 'none',
+              borderRadius: '6px',
+              cursor: 'pointer',
+              boxShadow: dashboardChartTab === 'severity_pie' ? '0 1px 2px rgba(0,0,0,0.06)' : 'none',
+              transition: 'all 0.15s ease'
+            }}
+          >
+            <PieChartIcon style={{ fontSize: '1rem', color: '#ea580c' }} />
+            <span>Findings Severity (Recharts Pie)</span>
+          </button>
+
+          <button
+            onClick={() => setDashboardChartTab('review_bars')}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '6px',
+              padding: '6px 14px',
+              fontSize: '0.78125rem',
+              fontWeight: dashboardChartTab === 'review_bars' ? 700 : 500,
+              backgroundColor: dashboardChartTab === 'review_bars' ? '#ffffff' : 'transparent',
+              color: dashboardChartTab === 'review_bars' ? '#0f172a' : '#64748b',
+              border: 'none',
+              borderRadius: '6px',
+              cursor: 'pointer',
+              boxShadow: dashboardChartTab === 'review_bars' ? '0 1px 2px rgba(0,0,0,0.06)' : 'none',
+              transition: 'all 0.15s ease'
+            }}
+          >
+            <BarChartIcon style={{ fontSize: '1rem', color: '#1d70b8' }} />
+            <span>Review Gate Status (D3 Bar)</span>
+          </button>
+
+          <button
+            onClick={() => setDashboardChartTab('benchmarking')}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '6px',
+              padding: '6px 14px',
+              fontSize: '0.78125rem',
+              fontWeight: dashboardChartTab === 'benchmarking' ? 700 : 500,
+              backgroundColor: dashboardChartTab === 'benchmarking' ? '#ffffff' : 'transparent',
+              color: dashboardChartTab === 'benchmarking' ? '#0f172a' : '#64748b',
+              border: 'none',
+              borderRadius: '6px',
+              cursor: 'pointer',
+              boxShadow: dashboardChartTab === 'benchmarking' ? '0 1px 2px rgba(0,0,0,0.06)' : 'none',
+              transition: 'all 0.15s ease'
+            }}
+          >
+            <CompareIcon style={{ fontSize: '1rem', color: '#6366f1' }} />
+            <span>Peer Benchmarking</span>
+          </button>
+
+          <button
+            onClick={() => setDashboardChartTab('both')}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '6px',
+              padding: '6px 14px',
+              fontSize: '0.78125rem',
+              fontWeight: dashboardChartTab === 'both' ? 700 : 500,
+              backgroundColor: dashboardChartTab === 'both' ? '#ffffff' : 'transparent',
+              color: dashboardChartTab === 'both' ? '#0f172a' : '#64748b',
+              border: 'none',
+              borderRadius: '6px',
+              cursor: 'pointer',
+              boxShadow: dashboardChartTab === 'both' ? '0 1px 2px rgba(0,0,0,0.06)' : 'none',
+              transition: 'all 0.15s ease'
+            }}
+          >
+            <span>View All Charts</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Render Recharts Compliance Status Pie Chart, Findings Severity Pie Chart & D3 Review Distribution with Fault Isolation */}
+      <ErrorBoundary isolate componentName="Portfolio Analytics Charts" resetKeys={[dashboardChartTab, selectedStatus]}>
+        {(dashboardChartTab === 'compliance_pie' || dashboardChartTab === 'both') && (
+          <ComplianceStatusPieChart
+            projects={projects}
+            selectedStatus={selectedStatus}
+            onSelectStatus={setSelectedStatus}
+            title="Portfolio Compliance Requirements Status (Recharts)"
+            subtitle="Real-time status breakdown across all portfolio compliance criteria (Compliant, Non-compliant, In Progress) for project stakeholders."
+            showSummaryCards={true}
+            showFilterButtons={true}
+          />
+        )}
+
+        {(dashboardChartTab === 'severity_pie' || dashboardChartTab === 'both') && (
+          <FindingsSeverityPieChart
+            title="Portfolio Assurance Findings by Severity Level (Recharts)"
+            subtitle="Categorization of all portfolio audit findings across Critical, High, Medium, and Low severity classifications."
+            showSummaryCards={true}
+            showFilterButtons={true}
+          />
+        )}
+
+        {/* Render D3.js Review Status Distribution Chart */}
+        {(dashboardChartTab === 'review_bars' || dashboardChartTab === 'both') && (
+          <ReviewStatusDistributionChart
+            projects={projects}
+            selectedStatus={selectedStatus}
+            onSelectStatus={setSelectedStatus}
+          />
+        )}
+
+        {/* Render Peer Benchmarking View */}
+        {(dashboardChartTab === 'benchmarking' || dashboardChartTab === 'both') && (
+          <div style={{ marginTop: dashboardChartTab === 'both' ? '20px' : '0px' }}>
+            <PeerBenchmarkingView />
+          </div>
+        )}
+      </ErrorBoundary>
+
+      {/* 4. Main Dashboard Layout (Grid with Left Project Reviews and Right Deadlines/Activity) */}
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: 'minmax(0, 1.8fr) minmax(0, 1.2fr)',
+        gap: '24px',
+        alignItems: 'start'
+      }}>
+        {/* Left Column: Active Compliance Reviews */}
+        <div>
+          {/* Section Header */}
+          <motion.div
+            initial={{ opacity: 0, y: 14 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.4, delay: 0.12, ease: [0.16, 1, 0.3, 1] }}
+            style={{
+              backgroundColor: '#ffffff',
+              border: '1px solid #e2e8f0',
+              borderRadius: '10px',
+              padding: '20px',
+              marginBottom: '16px'
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px', flexWrap: 'wrap', gap: '10px' }}>
+              <div>
+                <h2 style={{ fontSize: '1.15rem', fontWeight: 700, color: '#0f172a', margin: '0 0 4px 0' }}>
+                  Active Compliance Reviews ({filteredProjects.length})
+                </h2>
+                <div style={{ fontSize: '0.8125rem', color: '#64748b' }}>
+                  Infrastructure assurance dossiers under formal Gateway and Treasury scrutiny
+                </div>
+              </div>
+
+              {/* Sort Selector & Secondary PDF Export */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                <button
+                  onClick={handleExportCompliancePdf}
+                  disabled={isExportingPdf}
+                  title="Export filtered compliance summary report as PDF"
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '5px',
+                    padding: '5px 12px',
+                    backgroundColor: '#ffffff',
+                    border: '1px solid #cbd5e1',
+                    borderRadius: '5px',
+                    fontSize: '0.78125rem',
+                    fontWeight: 600,
+                    color: '#1d70b8',
+                    cursor: isExportingPdf ? 'wait' : 'pointer',
+                    transition: 'all 0.15s ease'
+                  }}
+                >
+                  <PdfIcon style={{ fontSize: '0.95rem' }} />
+                  <span>{isExportingPdf ? 'Exporting...' : 'Export PDF'}</span>
+                </button>
+
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <span style={{ fontSize: '0.75rem', color: '#64748b', fontWeight: 500 }}>Sort:</span>
+                  <select
+                    value={sortBy}
+                    onChange={(e) => setSortBy(e.target.value as any)}
+                    style={{
+                      padding: '5px 10px',
+                      fontSize: '0.8125rem',
+                      border: '1px solid #cbd5e1',
+                      borderRadius: '5px',
+                      backgroundColor: '#ffffff',
+                      color: '#1e293b',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    <option value="date">Next Review Date</option>
+                    <option value="score_desc">Assurance Score (High to Low)</option>
+                    <option value="score_asc">Assurance Score (Low to High)</option>
+                    <option value="budget">Capital Budget Size</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            {/* Filter Bar Controls */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              {/* Search Bar */}
+              <div style={{ position: 'relative' }}>
+                <SearchIcon style={{
+                  position: 'absolute',
+                  left: '12px',
+                  top: '50%',
+                  transform: 'translateY(-50%)',
+                  color: '#94a3b8',
+                  fontSize: '1.1rem'
+                }} />
+                <input
+                  type="text"
+                  placeholder="Search projects by name, code, SRO, department, or location..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  style={{
+                    width: '100%',
+                    padding: '8px 36px 8px 38px',
+                    fontSize: '0.85rem',
+                    border: '1px solid #cbd5e1',
+                    borderRadius: '6px',
+                    outline: 'none'
+                  }}
+                />
+                {searchQuery && (
+                  <button
+                    onClick={() => setSearchQuery('')}
+                    style={{
+                      position: 'absolute',
+                      right: '10px',
+                      top: '50%',
+                      transform: 'translateY(-50%)',
+                      background: 'none',
+                      border: 'none',
+                      cursor: 'pointer',
+                      color: '#94a3b8',
+                      fontSize: '1rem'
+                    }}
+                  >
+                    ×
+                  </button>
+                )}
+              </div>
+
+              {/* Sector Filter Buttons (Segmented Controls) */}
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', alignItems: 'center' }}>
+                <span style={{ fontSize: '0.75rem', fontWeight: 600, color: '#64748b', marginRight: '4px' }}>DOMAIN:</span>
+                {availableSectors.map(sector => (
+                  <button
+                    key={sector}
+                    onClick={() => setSelectedSector(sector)}
+                    style={{
+                      padding: '4px 10px',
+                      fontSize: '0.75rem',
+                      fontWeight: selectedSector === sector ? 600 : 500,
+                      backgroundColor: selectedSector === sector ? '#1d70b8' : '#f1f5f9',
+                      color: selectedSector === sector ? '#ffffff' : '#334155',
+                      border: 'none',
+                      borderRadius: '4px',
+                      cursor: 'pointer',
+                      transition: 'all 0.1s ease'
+                    }}
+                  >
+                    {sector === 'ALL' ? 'All Domains' : sector}
+                  </button>
+                ))}
+              </div>
+
+              {/* Gateway Stage & Status Dropdowns */}
+              <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                <div style={{ flex: '1 1 180px' }}>
+                  <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: '#64748b', marginBottom: '4px' }}>
+                    ASSURANCE GATE:
+                  </label>
+                  <select
+                    value={selectedGate}
+                    onChange={(e) => setSelectedGate(e.target.value)}
+                    style={{
+                      width: '100%',
+                      padding: '6px 10px',
+                      fontSize: '0.8125rem',
+                      border: '1px solid #cbd5e1',
+                      borderRadius: '5px',
+                      backgroundColor: '#ffffff'
+                    }}
+                  >
+                    <option value="ALL">All Assurance Gates</option>
+                    {FRAMEWORK_CONFIGS[selectedFramework].gates.map(g => (
+                      <option key={g.id} value={g.id}>{g.label}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div style={{ flex: '1 1 180px' }}>
+                  <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: '#64748b', marginBottom: '4px' }}>
+                    REVIEW STATUS:
+                  </label>
+                  <select
+                    value={selectedStatus}
+                    onChange={(e) => setSelectedStatus(e.target.value)}
+                    style={{
+                      width: '100%',
+                      padding: '6px 10px',
+                      fontSize: '0.8125rem',
+                      border: '1px solid #cbd5e1',
+                      borderRadius: '5px',
+                      backgroundColor: '#ffffff'
+                    }}
+                  >
+                    <option value="ALL">All Review Statuses</option>
+                    <option value="Active Assurance">Active Assurance</option>
+                    <option value="Under Formal Review">Under Formal Review</option>
+                    <option value="Remediation Required">Remediation Required</option>
+                    <option value="Ready for Sign-Off">Ready for Sign-Off</option>
+                    <option value="Scheduled">Scheduled</option>
+                  </select>
+                </div>
+
+                {(selectedSector !== 'ALL' || selectedGate !== 'ALL' || selectedStatus !== 'ALL' || searchQuery) && (
+                  <div style={{ display: 'flex', alignItems: 'flex-end' }}>
+                    <button
+                      onClick={handleResetFilters}
+                      style={{
+                        padding: '6px 12px',
+                        fontSize: '0.75rem',
+                        backgroundColor: '#f8fafc',
+                        border: '1px solid #cbd5e1',
+                        borderRadius: '5px',
+                        color: '#64748b',
+                        cursor: 'pointer',
+                        fontWeight: 500
+                      }}
+                    >
+                      Reset Filters
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
+          </motion.div>
+
+          {/* Project Review List */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+            {filteredProjects.length === 0 ? (
+              dataScope === 'COMPANY' ? (
+                <div style={{
+                  backgroundColor: '#ffffff',
+                  border: '2px dashed #cbd5e1',
+                  borderRadius: '12px',
+                  padding: '48px 24px',
+                  textAlign: 'center'
+                }}>
+                  <div style={{
+                    width: '56px',
+                    height: '56px',
+                    borderRadius: '50%',
+                    backgroundColor: '#eff6ff',
+                    color: '#1d70b8',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    marginBottom: '16px'
+                  }}>
+                    <AddIcon style={{ fontSize: '2rem' }} />
+                  </div>
+                  <h3 style={{ fontSize: '1.25rem', fontWeight: 800, color: '#0f172a', margin: '0 0 8px 0' }}>
+                    No Internal Company Projects Ingested Yet
+                  </h3>
+                  <p style={{ fontSize: '0.875rem', color: '#64748b', maxWidth: '520px', margin: '0 auto 20px auto', lineHeight: 1.5 }}>
+                    Ingest your company&apos;s internal software, data pipelines, or AI initiatives to generate stage-gate compliance roadmaps and audit findings.
+                  </p>
+                  <div style={{ display: 'flex', gap: '12px', justifyContent: 'center', flexWrap: 'wrap' }}>
+                    <button
+                      type="button"
+                      onClick={() => setIsIngestModalOpen(true)}
+                      style={{
+                        padding: '10px 20px',
+                        backgroundColor: '#1d70b8',
+                        color: '#ffffff',
+                        borderRadius: '8px',
+                        border: 'none',
+                        fontWeight: 700,
+                        cursor: 'pointer',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '8px',
+                        boxShadow: '0 2px 4px rgba(29, 112, 184, 0.3)'
+                      }}
+                    >
+                      <AddIcon style={{ fontSize: '1.1rem' }} />
+                      <span>+ Ingest Company Project</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setDataScope('ALL')}
+                      style={{
+                        padding: '10px 20px',
+                        backgroundColor: '#f1f5f9',
+                        color: '#334155',
+                        borderRadius: '8px',
+                        border: '1px solid #cbd5e1',
+                        fontWeight: 600,
+                        cursor: 'pointer'
+                      }}
+                    >
+                      Explore Sample Sandbox Data
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div style={{
+                  backgroundColor: '#ffffff',
+                  border: '1px solid #e2e8f0',
+                  borderRadius: '10px',
+                  padding: '40px 20px',
+                  textAlign: 'center',
+                  color: '#64748b'
+                }}>
+                  <FilterIcon style={{ fontSize: '2rem', color: '#94a3b8', marginBottom: '8px' }} />
+                  <p style={{ margin: '0 0 12px 0', fontSize: '0.9rem', fontWeight: 500 }}>
+                    No project reviews match your filter criteria.
+                  </p>
+                  <button
+                    onClick={handleResetFilters}
+                    style={{
+                      padding: '6px 14px',
+                      backgroundColor: '#1d70b8',
+                      color: '#ffffff',
+                      border: 'none',
+                      borderRadius: '5px',
+                      fontSize: '0.8125rem',
+                      fontWeight: 600,
+                      cursor: 'pointer'
+                    }}
+                  >
+                    Clear All Filters
+                  </button>
+                </div>
+              )
+            ) : (
+              filteredProjects.map((proj, idx) => {
+                const isReady = proj.assuranceScore >= 80;
+                const statusColor =
+                  proj.reviewStatus === 'Ready for Sign-Off' ? '#16a34a' :
+                  proj.reviewStatus === 'Remediation Required' ? '#dc2626' :
+                  proj.reviewStatus === 'Under Formal Review' ? '#d97706' : '#1d70b8';
+
+                return (
+                  <motion.div
+                    key={proj.id}
+                    initial={{ opacity: 0, y: 12 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.35, delay: Math.min(idx * 0.04, 0.28), ease: [0.16, 1, 0.3, 1] }}
+                    whileHover={{ y: -2, borderColor: '#93c5fd', boxShadow: '0 4px 8px -2px rgba(15, 23, 42, 0.06)' }}
+                    style={{
+                      backgroundColor: '#ffffff',
+                      border: '1px solid #e2e8f0',
+                      borderRadius: '10px',
+                      padding: '20px',
+                      boxShadow: '0 1px 3px rgba(15, 23, 42, 0.03)',
+                      transition: 'border-color 0.15s ease'
+                    }}
+                  >
+                    {/* Project Header Row */}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '12px', marginBottom: '12px' }}>
+                      <div>
+                        {/* Domain Metadata Strip */}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.75rem', color: '#64748b', marginBottom: '4px', flexWrap: 'wrap' }}>
+                          <span style={{ fontWeight: 700, color: '#1d70b8', fontFamily: 'monospace' }}>{proj.code}</span>
+                          <span style={{
+                            fontSize: '0.6875rem',
+                            padding: '1px 7px',
+                            borderRadius: '4px',
+                            fontWeight: 600,
+                            backgroundColor: proj.framework === 'SECURITY_GDPR' ? '#ecfdf5' : proj.framework === 'AI_GOVERNANCE' ? '#f5f3ff' : '#fffbeb',
+                            color: proj.framework === 'SECURITY_GDPR' ? '#047857' : proj.framework === 'AI_GOVERNANCE' ? '#6d28d9' : '#b45309',
+                            border: `1px solid ${proj.framework === 'SECURITY_GDPR' ? '#a7f3d0' : proj.framework === 'AI_GOVERNANCE' ? '#ddd6fe' : '#fde68a'}`
+                          }}>
+                            {proj.frameworkLabel || (proj.framework === 'SECURITY_GDPR' ? 'Security & GDPR' : proj.framework === 'AI_GOVERNANCE' ? 'AI Launch' : 'Strategic PMO')}
+                          </span>
+                          <span aria-hidden="true">·</span>
+                          <span>{proj.department}</span>
+                          <span aria-hidden="true">·</span>
+                          <span>{proj.sector}</span>
+                        </div>
+
+                        <h3 style={{
+                          fontSize: '1.125rem',
+                          fontWeight: 700,
+                          color: '#0f172a',
+                          margin: '0 0 6px 0',
+                          lineHeight: 1.3
+                        }}>
+                          {proj.name}
+                        </h3>
+
+                        <div style={{ fontSize: '0.8125rem', color: '#475569', lineHeight: 1.4, maxWidth: '640px' }}>
+                          {proj.description}
+                        </div>
+                      </div>
+
+                      {/* Assurance Score & Status */}
+                      <div style={{ textAlign: 'right' }}>
+                        <div style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '6px',
+                          fontSize: '0.75rem',
+                          fontWeight: 600,
+                          color: statusColor,
+                          marginBottom: '4px'
+                        }}>
+                          <span style={{
+                            width: '8px',
+                            height: '8px',
+                            borderRadius: '50%',
+                            backgroundColor: statusColor
+                          }} />
+                          <span>{proj.reviewStatus}</span>
+                        </div>
+
+                        <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'flex-end', gap: '4px' }}>
+                          <span style={{ fontSize: '1.5rem', fontWeight: 800, color: '#0f172a', fontFamily: 'monospace' }}>
+                            {proj.assuranceScore}%
+                          </span>
+                          <span style={{ fontSize: '0.75rem', color: isReady ? '#16a34a' : '#64748b', fontWeight: 600 }}>
+                            {isReady ? 'Substantial' : 'Assurance'}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Progress Metrics Linear Bar */}
+                    <div style={{ marginBottom: '14px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', color: '#64748b', marginBottom: '4px', fontFamily: 'monospace' }}>
+                        <span>Progress: {proj.compliantCount} of {proj.totalRequirements} Verified</span>
+                        <span>{proj.inProgressCount} In Progress · {proj.flaggedCount} Flagged</span>
+                      </div>
+                      <div style={{
+                        height: '7px',
+                        backgroundColor: '#f1f5f9',
+                        borderRadius: '4px',
+                        overflow: 'hidden',
+                        display: 'flex'
+                      }}>
+                        <div style={{
+                          width: `${(proj.compliantCount / proj.totalRequirements) * 100}%`,
+                          backgroundColor: '#16a34a'
+                        }} title="Compliant" />
+                        <div style={{
+                          width: `${(proj.inProgressCount / proj.totalRequirements) * 100}%`,
+                          backgroundColor: '#f59e0b'
+                        }} title="In Progress" />
+                        <div style={{
+                          width: `${(proj.flaggedCount / proj.totalRequirements) * 100}%`,
+                          backgroundColor: '#dc2626'
+                        }} title="Flagged" />
+                      </div>
+                    </div>
+
+                    {/* Accountability & Milestone Row */}
+                    <div style={{
+                      display: 'grid',
+                      gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+                      gap: '12px',
+                      padding: '12px',
+                      backgroundColor: '#f8fafc',
+                      borderRadius: '6px',
+                      fontSize: '0.8125rem',
+                      marginBottom: '14px'
+                    }}>
+                      <div>
+                        <div style={{ fontSize: '0.7rem', color: '#64748b', fontWeight: 600 }}>SENIOR RESPONSIBLE OWNER</div>
+                        <div style={{ fontWeight: 600, color: '#1e293b' }}>{proj.sro}</div>
+                      </div>
+                      <div>
+                        <div style={{ fontSize: '0.7rem', color: '#64748b', fontWeight: 600 }}>GATEWAY STAGE</div>
+                        <div style={{ fontWeight: 600, color: '#1d70b8' }}>{proj.gateLabel}</div>
+                      </div>
+                      <div>
+                        <div style={{ fontSize: '0.7rem', color: '#64748b', fontWeight: 600 }}>CAPITAL ENVELOPE</div>
+                        <div style={{ fontWeight: 700, color: '#0f172a', fontFamily: 'monospace' }}>{proj.budgetFormatted}</div>
+                      </div>
+                      <div>
+                        <div style={{ fontSize: '0.7rem', color: '#64748b', fontWeight: 600 }}>NEXT REVIEW DATE</div>
+                        <div style={{ fontWeight: 600, color: '#0f172a', fontFamily: 'monospace' }}>{proj.nextReviewDate}</div>
+                      </div>
+                    </div>
+
+                    {/* Action Bar */}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
+                      <button
+                        onClick={() => setSelectedProjectForModal(proj)}
+                        style={{
+                          background: 'none',
+                          border: 'none',
+                          padding: 0,
+                          fontSize: '0.8125rem',
+                          fontWeight: 600,
+                          color: '#1d70b8',
+                          cursor: 'pointer',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '4px'
+                        }}
+                      >
+                        <span>View Project Dossier & Governance Details</span>
+                        <ArrowIcon style={{ fontSize: '0.9rem' }} />
+                      </button>
+
+                      <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                        <Link href={`/project-dashboard?projectId=${proj.id}`} passHref legacyBehavior prefetch={false}>
+                          <a style={{
+                            padding: '6px 12px',
+                            backgroundColor: '#eff6ff',
+                            border: '1px solid #bfdbfe',
+                            borderRadius: '4px',
+                            fontSize: '0.75rem',
+                            fontWeight: 600,
+                            color: '#1d70b8',
+                            textDecoration: 'none',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '4px'
+                          }}>
+                            <span>Project Dashboard</span>
+                            <AssessmentIcon style={{ fontSize: '0.85rem' }} />
+                          </a>
+                        </Link>
+                        <Link href="/results" passHref legacyBehavior prefetch={false}>
+                          <a style={{
+                            padding: '6px 12px',
+                            backgroundColor: '#ffffff',
+                            border: '1px solid #cbd5e1',
+                            borderRadius: '4px',
+                            fontSize: '0.75rem',
+                            fontWeight: 600,
+                            color: '#334155',
+                            textDecoration: 'none'
+                          }}>
+                            Review Findings
+                          </a>
+                        </Link>
+                        <Link href="/compliance-tracker" passHref legacyBehavior prefetch={false}>
+                          <a style={{
+                            padding: '6px 14px',
+                            backgroundColor: '#1d70b8',
+                            borderRadius: '4px',
+                            fontSize: '0.75rem',
+                            fontWeight: 600,
+                            color: '#ffffff',
+                            textDecoration: 'none',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '4px'
+                          }}>
+                            <span>Audit Tracker</span>
+                            <ExternalLinkIcon style={{ fontSize: '0.85rem' }} />
+                          </a>
+                        </Link>
+                      </div>
+                    </div>
+                  </motion.div>
+                );
+              })
+            )}
+          </div>
+        </div>
+
+        {/* Right Column: Upcoming Deadlines & Recent Progress Metrics */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+          {/* Section: Upcoming Deadlines Command Center */}
+          <motion.div
+            initial={{ opacity: 0, y: 14 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.4, delay: 0.16, ease: [0.16, 1, 0.3, 1] }}
+            style={{
+              backgroundColor: '#ffffff',
+              border: '1px solid #e2e8f0',
+              borderRadius: '10px',
+              padding: '20px',
+              boxShadow: '0 1px 3px rgba(15, 23, 42, 0.03)'
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
+              <div>
+                <h2 style={{ fontSize: '1.15rem', fontWeight: 700, color: '#0f172a', margin: '0 0 2px 0' }}>
+                  Upcoming Deadlines ({filteredDeadlines.length})
+                </h2>
+                <div style={{ fontSize: '0.8125rem', color: '#64748b' }}>
+                  Statutory Gateway cutoffs, Treasury approvals & evidence freezes
+                </div>
+              </div>
+
+              <button
+                onClick={() => setIsNewDeadlineModalOpen(true)}
+                style={{
+                  padding: '4px 8px',
+                  backgroundColor: '#f1f5f9',
+                  border: '1px solid #cbd5e1',
+                  borderRadius: '4px',
+                  fontSize: '0.75rem',
+                  fontWeight: 600,
+                  color: '#1d70b8',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '4px'
+                }}
+              >
+                <AddIcon style={{ fontSize: '0.9rem' }} />
+                <span>Add</span>
+              </button>
+            </div>
+
+            {/* Deadline Urgency Filters */}
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginBottom: '14px' }}>
+              {[
+                { id: 'ALL', label: 'All' },
+                { id: 'SOON', label: '≤ 14 Days' },
+                { id: 'GATEWAY', label: 'Gateways' },
+                { id: 'TREASURY', label: 'Treasury' },
+                { id: 'PENDING', label: 'Outstanding' }
+              ].map(item => (
+                <button
+                  key={item.id}
+                  onClick={() => setDeadlineUrgencyFilter(item.id)}
+                  style={{
+                    padding: '3px 8px',
+                    fontSize: '0.75rem',
+                    fontWeight: deadlineUrgencyFilter === item.id ? 600 : 500,
+                    backgroundColor: deadlineUrgencyFilter === item.id ? '#1e293b' : '#f8fafc',
+                    color: deadlineUrgencyFilter === item.id ? '#ffffff' : '#64748b',
+                    border: '1px solid #e2e8f0',
+                    borderRadius: '4px',
+                    cursor: 'pointer'
+                  }}
+                >
+                  {item.label}
+                </button>
+              ))}
+            </div>
+
+            {/* Deadlines List */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              {filteredDeadlines.map((dl, dlIdx) => {
+                const isUrgent = dl.daysRemaining <= 14;
+                const isSubmitted = dl.status === 'Submitted';
+
+                return (
+                  <motion.div
+                    key={dl.id}
+                    initial={{ opacity: 0, y: 8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.28, delay: Math.min(dlIdx * 0.03, 0.24) }}
+                    whileHover={{ borderColor: '#cbd5e1' }}
+                    style={{
+                      padding: '12px',
+                      backgroundColor: isSubmitted ? '#f8fafc' : '#ffffff',
+                      border: `1px solid ${isUrgent && !isSubmitted ? '#fed7aa' : '#e2e8f0'}`,
+                      borderRadius: '6px',
+                      transition: 'all 0.15s ease'
+                    }}
+                  >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '8px', marginBottom: '6px' }}>
+                      <div>
+                        <div style={{ fontSize: '0.7rem', color: '#64748b', fontWeight: 600 }}>
+                          {dl.projectName} · <span style={{ color: '#1d70b8' }}>{dl.gate}</span>
+                        </div>
+                        <div style={{
+                          fontSize: '0.875rem',
+                          fontWeight: 600,
+                          color: isSubmitted ? '#64748b' : '#0f172a',
+                          textDecoration: isSubmitted ? 'line-through' : 'none'
+                        }}>
+                          {dl.title}
+                        </div>
+                      </div>
+
+                      {/* Countdown badge */}
+                      <span style={{
+                        fontSize: '0.75rem',
+                        fontWeight: 700,
+                        fontFamily: 'monospace',
+                        color: isSubmitted ? '#16a34a' : isUrgent ? '#ea580c' : '#475569',
+                        backgroundColor: isSubmitted ? '#dcfce7' : isUrgent ? '#ffedd5' : '#f1f5f9',
+                        padding: '2px 6px',
+                        borderRadius: '4px',
+                        whiteSpace: 'nowrap'
+                      }}>
+                        {isSubmitted ? '✓ Submitted' : `${dl.daysRemaining}d left`}
+                      </span>
+                    </div>
+
+                    <div style={{ fontSize: '0.75rem', color: '#64748b', marginBottom: '8px', lineHeight: 1.4 }}>
+                      {dl.description}
+                    </div>
+
+                    <div style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      fontSize: '0.75rem',
+                      borderTop: '1px solid #f1f5f9',
+                      paddingTop: '8px'
+                    }}>
+                      <span style={{ color: '#475569', fontFamily: 'monospace' }}>
+                        Due: {dl.dueDate} ({dl.leadOwner ? dl.leadOwner.split('(')[0].trim() : 'Unassigned'})
+                      </span>
+
+                      {/* Interactive status toggle */}
+                      <button
+                        onClick={() => handleToggleDeadlineStatus(dl.id)}
+                        style={{
+                          padding: '2px 8px',
+                          fontSize: '0.7rem',
+                          fontWeight: 600,
+                          backgroundColor:
+                            dl.status === 'Submitted' ? '#16a34a' :
+                            dl.status === 'In Progress' ? '#f59e0b' : '#e2e8f0',
+                          color: dl.status === 'Pending' ? '#475569' : '#ffffff',
+                          border: 'none',
+                          borderRadius: '3px',
+                          cursor: 'pointer'
+                        }}
+                        title="Click to toggle status (Pending -> In Progress -> Submitted)"
+                      >
+                        {dl.status}
+                      </button>
+                    </div>
+                  </motion.div>
+                );
+              })}
+            </div>
+          </motion.div>
+
+          {/* Section: Recent Progress Metrics & Audit Activity Stream */}
+          <motion.div
+            initial={{ opacity: 0, y: 14 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.4, delay: 0.22, ease: [0.16, 1, 0.3, 1] }}
+            style={{
+              backgroundColor: '#ffffff',
+              border: '1px solid #e2e8f0',
+              borderRadius: '10px',
+              padding: '20px',
+              boxShadow: '0 1px 3px rgba(15, 23, 42, 0.03)'
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
+              <div>
+                <h2 style={{ fontSize: '1.15rem', fontWeight: 700, color: '#0f172a', margin: '0 0 2px 0' }}>
+                  Recent Progress Metrics
+                </h2>
+                <div style={{ fontSize: '0.8125rem', color: '#64748b' }}>
+                  Live verification audit activity across portfolio
+                </div>
+              </div>
+              <TimeIcon style={{ fontSize: '1.1rem', color: '#64748b' }} />
+            </div>
+
+            {/* Category Breakdown Table */}
+            <div style={{ marginBottom: '18px' }}>
+              <div style={{ fontSize: '0.75rem', fontWeight: 600, color: '#64748b', marginBottom: '8px' }}>
+                CROSS-PORTFOLIO ASSURANCE RATE BY CATEGORY
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                {[
+                  { name: 'Financial & Optimism Bias', rate: 84, color: '#16a34a' },
+                  { name: 'Risk Management (QSRA)', rate: 81, color: '#16a34a' },
+                  { name: 'Delivery Capability & PMO', rate: 79, color: '#1d70b8' },
+                  { name: 'Governance & Procurement', rate: 74, color: '#f59e0b' },
+                  { name: 'Regulatory & Carbon (PAS 2080)', rate: 82, color: '#16a34a' }
+                ].map(cat => (
+                  <div key={cat.name} style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.75rem' }}>
+                    <span style={{ width: '160px', color: '#334155', fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      {cat.name}
+                    </span>
+                    <div style={{ flex: 1, height: '6px', backgroundColor: '#f1f5f9', borderRadius: '3px', overflow: 'hidden' }}>
+                      <div style={{ width: `${cat.rate}%`, height: '100%', backgroundColor: cat.color }} />
+                    </div>
+                    <span style={{ width: '36px', textAlign: 'right', fontFamily: 'monospace', fontWeight: 600, color: '#0f172a' }}>
+                      {cat.rate}%
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Audit Activity Feed */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+              <span style={{ fontSize: '0.75rem', fontWeight: 600, color: '#64748b' }}>
+                RECENT AUDIT EVENTS
+              </span>
+              <Link href="/compliance-tracker?view=activity" prefetch={false} style={{ fontSize: '0.75rem', color: '#1d70b8', fontWeight: 600, textDecoration: 'none' }}>
+                Open Global Feed ➔
+              </Link>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              {activities.map(act => (
+                <div
+                  key={act.id}
+                  style={{
+                    display: 'flex',
+                    gap: '10px',
+                    paddingBottom: '12px',
+                    borderBottom: '1px solid #f1f5f9',
+                    fontSize: '0.8125rem'
+                  }}
+                >
+                  <div style={{
+                    width: '8px',
+                    height: '8px',
+                    borderRadius: '50%',
+                    backgroundColor:
+                      act.type === 'Verification' ? '#16a34a' :
+                      act.type === 'Sign-off' ? '#1d70b8' :
+                      act.type === 'Evidence Upload' ? '#8b5cf6' : '#d97706',
+                    marginTop: '5px',
+                    flexShrink: 0
+                  }} />
+
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontWeight: 600, color: '#0f172a', lineHeight: 1.3 }}>
+                      {act.action}
+                    </div>
+                    <div style={{ fontSize: '0.75rem', color: '#64748b', marginTop: '2px' }}>
+                      {act.projectName} · {act.actor ? act.actor.split('(')[0].trim() : (act.actorName || 'Reviewer')} · <span style={{ fontFamily: 'monospace' }}>{act.timestamp}</span>
+                    </div>
+                    {act.notesSnippet && (
+                      <div style={{
+                        marginTop: '4px',
+                        padding: '4px 8px',
+                        backgroundColor: '#f8fafc',
+                        borderRadius: '4px',
+                        fontSize: '0.75rem',
+                        color: '#475569',
+                        fontStyle: 'italic'
+                      }}>
+                        &ldquo;{act.notesSnippet}&rdquo;
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </motion.div>
+        </div>
+      </div>
+
+      {/* 4. Modal: Add Custom Deadline */}
+      <AnimatePresence>
+        {isNewDeadlineModalOpen && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.2 }}
+            style={{
+              position: 'fixed',
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              backgroundColor: 'rgba(15, 23, 42, 0.6)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              zIndex: 9999,
+              padding: '20px'
+            }}
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 10 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 10 }}
+              transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
+              style={{
+                backgroundColor: '#ffffff',
+                borderRadius: '10px',
+                width: '100%',
+                maxWidth: '520px',
+                padding: '24px',
+                boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)'
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+              <h3 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 700, color: '#0f172a' }}>
+                Schedule Upcoming Project Deadline
+              </h3>
+              <button
+                onClick={() => setIsNewDeadlineModalOpen(false)}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#64748b' }}
+              >
+                <CloseIcon />
+              </button>
+            </div>
+
+            <form onSubmit={handleCreateDeadline} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+              <div>
+                <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 600, color: '#334155', marginBottom: '4px' }}>
+                  Target Infrastructure Project *
+                </label>
+                <select
+                  value={newDeadlineProject}
+                  onChange={(e) => setNewDeadlineProject(e.target.value)}
+                  style={{
+                    width: '100%',
+                    padding: '8px 10px',
+                    fontSize: '0.875rem',
+                    border: '1px solid #cbd5e1',
+                    borderRadius: '6px',
+                    backgroundColor: '#ffffff'
+                  }}
+                >
+                  {projects.map(p => (
+                    <option key={p.id} value={p.id}>{p.code}: {p.name}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 600, color: '#334155', marginBottom: '4px' }}>
+                  Deadline Title / Milestone Deliverable *
+                </label>
+                <input
+                  type="text"
+                  required
+                  placeholder="e.g. Gateway 2 Outline Business Case (OBC) Submission"
+                  value={newDeadlineTitle}
+                  onChange={(e) => setNewDeadlineTitle(e.target.value)}
+                  style={{
+                    width: '100%',
+                    padding: '8px 10px',
+                    fontSize: '0.875rem',
+                    border: '1px solid #cbd5e1',
+                    borderRadius: '6px'
+                  }}
+                />
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 600, color: '#334155', marginBottom: '4px' }}>
+                    Deliverable Category *
+                  </label>
+                  <select
+                    value={newDeadlineCategory}
+                    onChange={(e) => setNewDeadlineCategory(e.target.value as any)}
+                    style={{
+                      width: '100%',
+                      padding: '8px 10px',
+                      fontSize: '0.8125rem',
+                      border: '1px solid #cbd5e1',
+                      borderRadius: '6px'
+                    }}
+                  >
+                    <option value="Gateway Submission">Gateway Submission</option>
+                    <option value="Treasury Approval">Treasury Approval</option>
+                    <option value="Evidence Cutoff">Evidence Cutoff</option>
+                    <option value="Ministerial Sign-off">Ministerial Sign-off</option>
+                    <option value="Audit Remediation">Audit Remediation</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 600, color: '#334155', marginBottom: '4px' }}>
+                    Due Date *
+                  </label>
+                  <input
+                    type="date"
+                    required
+                    value={newDeadlineDate}
+                    onChange={(e) => setNewDeadlineDate(e.target.value)}
+                    style={{
+                      width: '100%',
+                      padding: '8px 10px',
+                      fontSize: '0.8125rem',
+                      border: '1px solid #cbd5e1',
+                      borderRadius: '6px'
+                    }}
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 600, color: '#334155', marginBottom: '4px' }}>
+                  Lead Accountable Owner
+                </label>
+                <input
+                  type="text"
+                  value={newDeadlineOwner}
+                  onChange={(e) => setNewDeadlineOwner(e.target.value)}
+                  style={{
+                    width: '100%',
+                    padding: '8px 10px',
+                    fontSize: '0.875rem',
+                    border: '1px solid #cbd5e1',
+                    borderRadius: '6px'
+                  }}
+                />
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 600, color: '#334155', marginBottom: '4px' }}>
+                  Deliverable Context & Evidence Criteria
+                </label>
+                <textarea
+                  rows={2}
+                  placeholder="Summarize evidence criteria and stakeholder approvals required..."
+                  value={newDeadlineDescription}
+                  onChange={(e) => setNewDeadlineDescription(e.target.value)}
+                  style={{
+                    width: '100%',
+                    padding: '8px 10px',
+                    fontSize: '0.8125rem',
+                    border: '1px solid #cbd5e1',
+                    borderRadius: '6px',
+                    resize: 'none'
+                  }}
+                />
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '10px' }}>
+                <button
+                  type="button"
+                  onClick={() => setIsNewDeadlineModalOpen(false)}
+                  style={{
+                    padding: '8px 16px',
+                    fontSize: '0.8125rem',
+                    backgroundColor: '#ffffff',
+                    border: '1px solid #cbd5e1',
+                    borderRadius: '6px',
+                    cursor: 'pointer'
+                  }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  style={{
+                    padding: '8px 18px',
+                    fontSize: '0.8125rem',
+                    fontWeight: 600,
+                    backgroundColor: '#1d70b8',
+                    color: '#ffffff',
+                    border: 'none',
+                    borderRadius: '6px',
+                    cursor: 'pointer'
+                  }}
+                >
+                  Save Milestone Deadline
+                </button>
+              </div>
+            </form>
+          </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>
+
+      {/* 5. Modal: Project Executive Details Drawer */}
+      <AnimatePresence>
+        {selectedProjectForModal && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.2 }}
+            style={{
+              position: 'fixed',
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              backgroundColor: 'rgba(15, 23, 42, 0.6)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              zIndex: 9999,
+              padding: '20px'
+            }}
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 10 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 10 }}
+              transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
+              style={{
+                backgroundColor: '#ffffff',
+                borderRadius: '12px',
+                width: '100%',
+                maxWidth: '680px',
+                padding: '28px',
+                boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1)',
+                maxHeight: '90vh',
+                overflowY: 'auto'
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '16px' }}>
+              <div>
+                <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#1d70b8', fontFamily: 'monospace' }}>
+                  {selectedProjectForModal.code} · {selectedProjectForModal.department}
+                </span>
+                <h2 style={{ fontSize: '1.4rem', fontWeight: 800, color: '#0f172a', margin: '4px 0' }}>
+                  {selectedProjectForModal.name}
+                </h2>
+                <div style={{ fontSize: '0.85rem', color: '#475569' }}>
+                  {selectedProjectForModal.location}
+                </div>
+              </div>
+              <button
+                onClick={() => setSelectedProjectForModal(null)}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#64748b' }}
+              >
+                <CloseIcon />
+              </button>
+            </div>
+
+            <div style={{
+              padding: '16px',
+              backgroundColor: '#f8fafc',
+              borderRadius: '8px',
+              marginBottom: '20px',
+              fontSize: '0.875rem',
+              color: '#334155',
+              lineHeight: 1.5
+            }}>
+              {selectedProjectForModal.description}
+            </div>
+
+            {/* Governance Details Matrix */}
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: '1fr 1fr',
+              gap: '16px',
+              marginBottom: '20px',
+              fontSize: '0.85rem'
+            }}>
+              <div style={{ borderBottom: '1px solid #f1f5f9', paddingBottom: '8px' }}>
+                <span style={{ color: '#64748b', fontSize: '0.75rem', display: 'block', fontWeight: 600 }}>SRO ACCOUNTABILITY</span>
+                <span style={{ fontWeight: 600, color: '#0f172a' }}>{selectedProjectForModal.sro}</span>
+              </div>
+
+              <div style={{ borderBottom: '1px solid #f1f5f9', paddingBottom: '8px' }}>
+                <span style={{ color: '#64748b', fontSize: '0.75rem', display: 'block', fontWeight: 600 }}>LEAD AUDITOR</span>
+                <span style={{ fontWeight: 600, color: '#0f172a' }}>{selectedProjectForModal.leadAuditor}</span>
+              </div>
+
+              <div style={{ borderBottom: '1px solid #f1f5f9', paddingBottom: '8px' }}>
+                <span style={{ color: '#64748b', fontSize: '0.75rem', display: 'block', fontWeight: 600 }}>CURRENT GATE</span>
+                <span style={{ fontWeight: 600, color: '#1d70b8' }}>{selectedProjectForModal.gateLabel}</span>
+              </div>
+
+              <div style={{ borderBottom: '1px solid #f1f5f9', paddingBottom: '8px' }}>
+                <span style={{ color: '#64748b', fontSize: '0.75rem', display: 'block', fontWeight: 600 }}>CAPITAL BUDGET</span>
+                <span style={{ fontWeight: 700, color: '#0f172a', fontFamily: 'monospace' }}>{selectedProjectForModal.budgetFormatted}</span>
+              </div>
+
+              <div style={{ borderBottom: '1px solid #f1f5f9', paddingBottom: '8px' }}>
+                <span style={{ color: '#64748b', fontSize: '0.75rem', display: 'block', fontWeight: 600 }}>NEXT FORMAL REVIEW</span>
+                <span style={{ fontWeight: 600, color: '#0f172a', fontFamily: 'monospace' }}>{selectedProjectForModal.nextReviewDate}</span>
+              </div>
+
+              <div style={{ borderBottom: '1px solid #f1f5f9', paddingBottom: '8px' }}>
+                <span style={{ color: '#64748b', fontSize: '0.75rem', display: 'block', fontWeight: 600 }}>ASSURANCE FULFILLMENT</span>
+                <span style={{ fontWeight: 700, color: selectedProjectForModal.assuranceScore >= 80 ? '#16a34a' : '#d97706', fontFamily: 'monospace' }}>
+                  {selectedProjectForModal.assuranceScore}% ({selectedProjectForModal.compliantCount}/{selectedProjectForModal.totalRequirements} criteria)
+                </span>
+              </div>
+            </div>
+
+            {/* Project Deadlines */}
+            <div style={{ marginBottom: '20px' }}>
+              <h4 style={{ margin: '0 0 10px 0', fontSize: '0.95rem', fontWeight: 700, color: '#0f172a' }}>
+                Active Deadlines for this Infrastructure Asset
+              </h4>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                {deadlines.filter(d => d.projectId === selectedProjectForModal.id).map(dl => (
+                  <div key={dl.id} style={{
+                    padding: '10px 12px',
+                    backgroundColor: '#f8fafc',
+                    borderRadius: '6px',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    fontSize: '0.8125rem'
+                  }}>
+                    <div>
+                      <div style={{ fontWeight: 600, color: '#1e293b' }}>{dl.title}</div>
+                      <div style={{ fontSize: '0.75rem', color: '#64748b' }}>
+                        {dl.category} · Due: <span style={{ fontFamily: 'monospace' }}>{dl.dueDate}</span>
+                      </div>
+                    </div>
+                    <span style={{
+                      padding: '2px 8px',
+                      borderRadius: '4px',
+                      fontSize: '0.75rem',
+                      fontWeight: 600,
+                      backgroundColor: dl.status === 'Submitted' ? '#dcfce7' : '#ffedd5',
+                      color: dl.status === 'Submitted' ? '#16a34a' : '#ea580c'
+                    }}>
+                      {dl.status}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+              <Link href={`/project-dashboard?projectId=${selectedProjectForModal.id}`} passHref legacyBehavior prefetch={false}>
+                <a style={{
+                  padding: '8px 16px',
+                  backgroundColor: '#eff6ff',
+                  border: '1px solid #bfdbfe',
+                  color: '#1d70b8',
+                  borderRadius: '6px',
+                  fontSize: '0.85rem',
+                  fontWeight: 600,
+                  textDecoration: 'none',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '6px'
+                }}>
+                  <AssessmentIcon style={{ fontSize: '1rem' }} />
+                  <span>Open Project Dashboard</span>
+                </a>
+              </Link>
+
+              <button
+                type="button"
+                onClick={() => handleExportSingleProjectPdf(selectedProjectForModal)}
+                disabled={isExportingPdf}
+                title="Export this project's statutory compliance review as a PDF report"
+                style={{
+                  padding: '8px 16px',
+                  backgroundColor: '#ffffff',
+                  border: '1px solid #cbd5e1',
+                  borderRadius: '6px',
+                  fontSize: '0.85rem',
+                  fontWeight: 600,
+                  color: '#0f172a',
+                  cursor: isExportingPdf ? 'wait' : 'pointer',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '6px'
+                }}
+              >
+                <PdfIcon style={{ fontSize: '1rem', color: '#1d70b8' }} />
+                <span>{isExportingPdf ? 'Exporting...' : 'Export Project PDF'}</span>
+              </button>
+
+              <Link href="/compliance-tracker" passHref legacyBehavior prefetch={false}>
+                <a style={{
+                  padding: '8px 18px',
+                  backgroundColor: '#1d70b8',
+                  color: '#ffffff',
+                  borderRadius: '6px',
+                  fontSize: '0.85rem',
+                  fontWeight: 600,
+                  textDecoration: 'none',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '6px'
+                }}>
+                  <span>Open Full Audit Tracker</span>
+                  <ExternalLinkIcon style={{ fontSize: '1rem' }} />
+                </a>
+              </Link>
+            </div>
+          </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>
+      {/* Ingest Company Project Modal */}
+      <IngestCompanyProjectModal
+        isOpen={isIngestModalOpen}
+        onClose={() => setIsIngestModalOpen(false)}
+        onProjectCreated={handleProjectCreated}
+      />
+
+      {/* Purge Sample Sandbox Confirmation Modal */}
+      {isPurgeConfirmOpen && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          backgroundColor: 'rgba(15, 23, 42, 0.65)',
+          backdropFilter: 'blur(3px)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 9999,
+          padding: '16px'
+        }}>
+          <div style={{
+            backgroundColor: '#ffffff',
+            borderRadius: '12px',
+            maxWidth: '480px',
+            width: '100%',
+            padding: '24px',
+            boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.2)'
+          }}>
+            <h3 style={{ margin: '0 0 10px 0', fontSize: '1.15rem', fontWeight: 800, color: '#0f172a' }}>
+              Purge Sample Sandbox Projects?
+            </h3>
+            <p style={{ margin: '0 0 20px 0', fontSize: '0.85rem', color: '#475569', lineHeight: 1.5 }}>
+              This will remove the {sampleProjectsCount} default sample projects from your active dashboard view so you only see your company&apos;s ingested initiatives. You can re-enable sample data anytime.
+            </p>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+              <button
+                type="button"
+                onClick={() => setIsPurgeConfirmOpen(false)}
+                style={{
+                  padding: '8px 16px',
+                  backgroundColor: '#ffffff',
+                  border: '1px solid #cbd5e1',
+                  borderRadius: '6px',
+                  fontSize: '0.8125rem',
+                  fontWeight: 600,
+                  color: '#475569',
+                  cursor: 'pointer'
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handlePurgeSampleData}
+                style={{
+                  padding: '8px 18px',
+                  backgroundColor: '#dc2626',
+                  border: 'none',
+                  borderRadius: '6px',
+                  fontSize: '0.8125rem',
+                  fontWeight: 700,
+                  color: '#ffffff',
+                  cursor: 'pointer'
+                }}
+              >
+                Yes, Purge Sample Data
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
