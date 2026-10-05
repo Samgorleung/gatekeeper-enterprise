@@ -50,9 +50,12 @@ import {
   Article as ArticleIcon,
   AutoAwesome as SparklesIcon,
   RestartAlt as ResetIcon,
-  Science as ScienceIcon
+  Science as ScienceIcon,
+  Add as AddIcon
 } from '@mui/icons-material';
 import { motion, AnimatePresence } from 'framer-motion';
+import { useProjectSession } from '@/context/ProjectSessionContext';
+import { IngestCompanyProjectModal } from './IngestCompanyProjectModal';
 import {
   activeInfrastructureProjects,
   initialComplianceRequirements,
@@ -112,6 +115,17 @@ export const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
   defaultTab = 'assurance'
 }) => {
   const router = useRouter();
+  const {
+    activeProjectId,
+    availableProjects,
+    previousProject,
+    switchProject,
+    reloadPreviousProject,
+    saveNewProject,
+    isIngestModalOpen,
+    setIsIngestModalOpen
+  } = useProjectSession();
+
   const [projects, setProjects] = useState<InfrastructureProject[]>(activeInfrastructureProjects);
   const [selectedProjectId, setSelectedProjectId] = useState<string>(initialProjectId);
   const [requirements, setRequirements] = useState<ComplianceRequirementItem[]>(initialComplianceRequirements);
@@ -234,22 +248,34 @@ export const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
     };
   }, []);
 
+  // Sync selectedProjectId with URL or activeProjectId
+  useEffect(() => {
+    const qId = typeof router.query.projectId === 'string'
+      ? router.query.projectId
+      : typeof router.query.id === 'string'
+      ? router.query.id
+      : null;
+    if (qId) {
+      setSelectedProjectId(qId);
+    } else if (activeProjectId) {
+      setSelectedProjectId(activeProjectId);
+    }
+  }, [router.query.projectId, router.query.id, activeProjectId]);
+
+  // Combined project list from Firestore + seeds
+  const displayProjects = useMemo(() => {
+    return availableProjects.length > 0 ? availableProjects : projects;
+  }, [availableProjects, projects]);
+
   // Currently selected infrastructure project
   const currentProject = useMemo(() => {
-    return projects.find(p => p.id === selectedProjectId) || projects[0] || activeInfrastructureProjects[0];
-  }, [projects, selectedProjectId]);
+    return displayProjects.find(p => p.id === selectedProjectId) || displayProjects[0] || activeInfrastructureProjects[0];
+  }, [displayProjects, selectedProjectId]);
 
   // Change project handler
   const handleSelectProject = (projectId: string) => {
     setSelectedProjectId(projectId);
-    router.replace(
-      {
-        pathname: router.pathname,
-        query: { ...router.query, projectId }
-      },
-      undefined,
-      { shallow: true }
-    );
+    switchProject(projectId, true);
   };
 
   // Manual refresh handler
@@ -905,8 +931,8 @@ export const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
                 {currentProject.name}
               </h1>
 
-              {/* Project Selection Dropdown */}
-              <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+              {/* Project Selection Dropdown & Quick Actions */}
+              <div style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                 <select
                   value={selectedProjectId}
                   onChange={(e) => handleSelectProject(e.target.value)}
@@ -924,12 +950,59 @@ export const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
                     boxShadow: '0 1px 2px rgba(0, 0, 0, 0.04)'
                   }}
                 >
-                  {projects.map(p => (
+                  {displayProjects.map(p => (
                     <option key={p.id} value={p.id}>
-                      Switch: {p.name} ({p.code})
+                      {p.id === selectedProjectId ? '✓ Active: ' : 'Switch: '}{p.name} ({p.code})
                     </option>
                   ))}
                 </select>
+
+                {previousProject && (
+                  <button
+                    type="button"
+                    onClick={reloadPreviousProject}
+                    title={`Reload previous audit initiative: ${previousProject.name}`}
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '4px',
+                      padding: '6px 11px',
+                      backgroundColor: '#eff6ff',
+                      border: '1px solid #bfdbfe',
+                      borderRadius: '6px',
+                      color: '#1d4ed8',
+                      fontSize: '0.75rem',
+                      fontWeight: 600,
+                      cursor: 'pointer'
+                    }}
+                  >
+                    <ResetIcon style={{ fontSize: '0.9rem', color: '#f59e0b' }} />
+                    <span>Reload Prev ({previousProject.code})</span>
+                  </button>
+                )}
+
+                <button
+                  type="button"
+                  onClick={() => setIsIngestModalOpen(true)}
+                  title="Create or ingest a new compliance audit project into Cloud Firestore"
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '4px',
+                    padding: '6px 11px',
+                    backgroundColor: '#1d70b8',
+                    border: 'none',
+                    borderRadius: '6px',
+                    color: '#ffffff',
+                    fontSize: '0.75rem',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    boxShadow: '0 1px 2px rgba(0, 0, 0, 0.08)'
+                  }}
+                >
+                  <AddIcon style={{ fontSize: '0.95rem' }} />
+                  <span>+ New Project</span>
+                </button>
               </div>
             </div>
 
@@ -3133,6 +3206,13 @@ export const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
           </div>
         </div>
       )}
+
+      {/* Ingest / Create New Project Modal */}
+      <IngestCompanyProjectModal
+        isOpen={isIngestModalOpen}
+        onClose={() => setIsIngestModalOpen(false)}
+        onProjectCreated={saveNewProject}
+      />
     </div>
   );
 };

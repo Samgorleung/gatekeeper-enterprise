@@ -32,6 +32,7 @@ import { FindingsSeverityPieChart } from '@/components/FindingsSeverityPieChart'
 import { exportEvaluationFindingsCsv } from '@/utils/exportComplianceCsv';
 import { logger } from '@/utils/logger';
 import { activeInfrastructureProjects, InfrastructureProject } from '@/lib/seedData';
+import { useProjectSession } from '@/context/ProjectSessionContext';
 
 interface Rating {
   id: string;
@@ -135,8 +136,9 @@ const ResultsTable: React.FC = () => {
   const [categoryFilter, setCategoryFilter] = useState<string>('ALL');
   const [selectedSeverities, setSelectedSeverities] = useState<SeverityLevel[]>(ALL_SEVERITY_LEVELS);
   const [showSeverityChart, setShowSeverityChart] = useState<boolean>(true);
+  const { availableProjects, activeProjectId } = useProjectSession();
 
-  // Sync selected project with router query params
+  // Sync selected project with router query params or activeProjectId
   useEffect(() => {
     if (router.query.projectId && typeof router.query.projectId === 'string') {
       setSelectedProjectId(router.query.projectId);
@@ -145,10 +147,14 @@ const ResultsTable: React.FC = () => {
     }
   }, [router.query]);
 
+  const allProjects = useMemo(() => {
+    return availableProjects.length > 0 ? availableProjects : activeInfrastructureProjects;
+  }, [availableProjects]);
+
   const selectedProject = useMemo(() => {
     if (selectedProjectId === 'ALL') return null;
-    return activeInfrastructureProjects.find(p => p.id === selectedProjectId) || null;
-  }, [selectedProjectId]);
+    return allProjects.find(p => p.id === selectedProjectId) || null;
+  }, [allProjects, selectedProjectId]);
 
   const handleSelectProject = (newId: string) => {
     setSelectedProjectId(newId);
@@ -680,7 +686,7 @@ const ResultsTable: React.FC = () => {
               }}
             >
               <option value="ALL">All GMPP Infrastructure Projects (Entire Corpus)</option>
-              {activeInfrastructureProjects.map((p) => (
+              {allProjects.map((p) => (
                 <option key={p.id} value={p.id}>
                   {p.name} ({p.code})
                 </option>

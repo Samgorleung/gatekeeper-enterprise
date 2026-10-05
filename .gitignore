@@ -9,6 +9,9 @@ frontend/.env*
 *.cert
 *credentials*.json
 *service-account*.json
+firebase-applet-config.json
+frontend/firebase-applet-config.json
+*firebase-applet-config*.json
 .pyenv
 .vscode
 .idea

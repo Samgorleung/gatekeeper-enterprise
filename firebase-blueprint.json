@@ -164,6 +164,21 @@
         "gate": { "type": "string" }
       },
       "required": ["id", "type", "title", "actorName", "timestamp"]
+    },
+    "UserSession": {
+      "title": "UserSession",
+      "description": "User active audit session state and project selection",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userEmail": { "type": "string" },
+        "lastActiveProjectId": { "type": "string" },
+        "lastActiveProjectName": { "type": "string" },
+        "recentProjectIds": { "type": "array" },
+        "lastAuditScope": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "lastActiveProjectId", "updatedAt"]
     }
   },
   "firestore": {
@@ -202,6 +217,10 @@
     "/compliance_activities/{activityId}": {
       "schema": "AuditActivity",
       "description": "Global audit activity stream logging status transitions and bulk actions"
+    },
+    "/user_sessions/{sessionId}": {
+      "schema": "UserSession",
+      "description": "User active audit session and recent project history"
     }
   }
 }

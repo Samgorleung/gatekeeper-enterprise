@@ -1,12 +1,42 @@
 # Changelog
 
-All notable changes to the IPA Scout compliance and assurance review platform from the original source repository to the current release are documented in this file.
+All notable changes to the GateKeeper Enterprise compliance and assurance review platform from the original source repository to the current release are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to Semantic Versioning.
 
 ---
 
-## [2.39.0] - 2026-09-30
+## [2.41.0] - 2026-10-05
+
+### Summary
+1. **Active Project Selection & Cloud Firestore Session Persistence**:
+   - Engineered `ProjectSessionContext` (`frontend/context/ProjectSessionContext.tsx`) providing global state for `activeProjectId`, `activeProject`, `availableProjects`, `recentProjects`, and `previousProject`.
+   - Persists user active audit session and recent project history to Google Cloud Firestore (`user_sessions/{userId}`) with real-time `onSnapshot` listener synchronization and instant zero-latency `localStorage` hydration.
+   - Updated `firebase-blueprint.json` with the `UserSession` entity and deployed hardened security rules for `/user_sessions/{sessionId}` to Cloud Firestore.
+2. **Interactive Project Switcher & "Resume Previous Project" Experience**:
+   - Built `ActiveProjectResumeBanner` (`frontend/components/ActiveProjectResumeBanner.tsx`) positioned at the top of the Portfolio Hub, allowing auditors to immediately resume their active project with one click.
+   - Added `ActiveProjectHeaderBadge` (`frontend/components/ActiveProjectHeaderBadge.tsx`) in the persistent navigation header displaying the active initiative and a quick "Reload Prev" shortcut.
+   - Built `ProjectSwitcherModal` (`frontend/components/ProjectSwitcherModal.tsx`) supporting real-time project searching, category filtering (Custom vs. Benchmark datasets), one-click switching, and direct project creation.
+   - Enhanced `ProjectDashboard.tsx` with unified project selection, recent project reload actions, and embedded project ingestion modal.
+   - Synchronized Review Findings (`results.tsx`) with the global active project session and dynamic project scoping dropdown.
+
+---
+
+## [2.40.1] - 2026-10-05
+
+### Summary
+1. **Next.js Development Server & Webpack PackFileCacheStrategy Stabilization**:
+   - Diagnosed and permanently resolved `PackFileCacheStrategy` filesystem caching errors (`ENOENT: no such file or directory, lstat '/app/applet/frontend/.next/server'`) and broken relative path resolutions (`../../../../../../../frontend/.next/server/pages/...`).
+   - Configured `frontend/next.config.js` to disable Webpack filesystem pack-file disk caching in development mode (`config.cache = false`), enabling fast in-memory compilation without disk cache corruption or symlink traversal failures.
+   - Cleared stale `.next/cache` directories, restored dev server startup on port `3000` (`0.0.0.0:3000`), and verified `HTTP/1.1 200 OK` health status through both the Next.js dev server and the Nginx reverse proxy on port `8080`.
+   - Verified that production builds (`next build`) remain unaffected and optimized.
+2. **GitHub Secret Scanning & Firebase Configuration Protection (`.gitignore`)**:
+   - Configured repository-wide `.gitignore` rules to exclude `firebase-applet-config.json`, `frontend/firebase-applet-config.json`, and wildcard variants (`*firebase-applet-config*.json`).
+   - Prevents automated GitHub Secret Scanning alerts for public Firebase Web client keys (`AIzaSy...`) on future repository syncs while preserving local configuration files in AI Studio for zero-config runtime startup and real-time Cloud Firestore synchronization.
+
+---
+
+## [2.40.0] - 2026-10-03
 
 ### Summary
 Implemented all three approved core enhancements to empower infrastructure assurance reviewers, SROs, and HM Treasury Approvals Committees:

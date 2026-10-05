@@ -1485,9 +1485,9 @@ export const ComplianceTracker: React.FC<ComplianceTrackerProps> = ({
         !query ||
         r.code.toLowerCase().includes(query) ||
         r.title.toLowerCase().includes(query) ||
-        r.description.toLowerCase().includes(query) ||
+        (r.description && r.description.toLowerCase().includes(query)) ||
         r.category.toLowerCase().includes(query) ||
-        r.priority.toLowerCase().includes(query) ||
+        (r.priority && r.priority.toLowerCase().includes(query)) ||
         (r.dueDate && r.dueDate.toLowerCase().includes(query)) ||
         (r.evidenceThreshold && r.evidenceThreshold.toLowerCase().includes(query)) ||
         (r.documentRef && r.documentRef.toLowerCase().includes(query)) ||

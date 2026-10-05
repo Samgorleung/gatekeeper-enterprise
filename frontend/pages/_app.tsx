@@ -6,8 +6,10 @@ import { useRouter } from 'next/router';
 import { HelpOutline as HelpIcon, Business as BusinessIcon } from '@mui/icons-material';
 import { SearchProvider } from '@/context/SearchContext';
 import { CompanyProvider, useCompany } from '@/context/CompanyContext';
+import { ProjectSessionProvider } from '@/context/ProjectSessionContext';
 import { GlobalLoadingProvider } from '@/components/LoadingSystem';
 import { ConnectivityProvider, ConnectivityHeaderBadge, OfflineNoticeBanner } from '@/components/ConnectivityStatus';
+import { ActiveProjectHeaderBadge } from '@/components/ActiveProjectHeaderBadge';
 import { GlobalHeaderSearch } from '@/components/GlobalHeaderSearch';
 import { AuditFindingsSummaryCard } from '@/components/AuditFindingsSummaryCard';
 import { UserGuideModal } from '@/components/UserGuideModal';
@@ -160,6 +162,9 @@ function AppContent({ Component, pageProps }: AppProps) {
 
             {/* Zone 3: Executive Session & Connectivity */}
             <div className="header-actions">
+              {/* Active Audit Project Badge & Quick Switcher */}
+              <ActiveProjectHeaderBadge />
+
               {/* Company Profile / Data Setup Button */}
               <CompanyHeaderBadge />
 
@@ -296,13 +301,15 @@ function AppContent({ Component, pageProps }: AppProps) {
 export default function MyApp(props: AppProps) {
   return (
     <CompanyProvider>
-      <SearchProvider>
-        <GlobalLoadingProvider>
-          <ConnectivityProvider>
-            <AppContent {...props} />
-          </ConnectivityProvider>
-        </GlobalLoadingProvider>
-      </SearchProvider>
+      <ProjectSessionProvider>
+        <SearchProvider>
+          <GlobalLoadingProvider>
+            <ConnectivityProvider>
+              <AppContent {...props} />
+            </ConnectivityProvider>
+          </GlobalLoadingProvider>
+        </SearchProvider>
+      </ProjectSessionProvider>
     </CompanyProvider>
   );
 }

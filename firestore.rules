@@ -46,6 +46,11 @@ service cloud.firestore {
       allow read, write: if true;
     }
 
+    // User active audit session and project selection
+    match /user_sessions/{sessionId} {
+      allow read, write: if true;
+    }
+
     // Catch-all for test connections and development
     match /{document=**} {
       allow read, write: if true;

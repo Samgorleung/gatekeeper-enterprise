@@ -1,6 +1,7 @@
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { getDeadlineInfo } from './deadlineUtils';
+import { ComplianceRequirementItem } from '@/lib/seedData';
 
 export interface ExportPdfOptions {
   projectName?: string;
@@ -30,27 +31,7 @@ export interface ExportPdfOptions {
     flagged: number;
     percentage: number;
   }>;
-  requirements: Array<{
-    id: string;
-    code: string;
-    title: string;
-    description: string;
-    gate: string;
-    category: string;
-    priority: 'Critical' | 'High' | 'Medium' | 'Low' | string;
-    status: 'Compliant' | 'In Progress' | 'Flagged' | 'N/A' | string;
-    isChecked: boolean;
-    evidenceThreshold: string;
-    documentRef?: string;
-    auditorNotes?: string;
-    auditedAt?: string | null;
-    auditorName?: string;
-    checkedBy?: string;
-    assignedTo?: string;
-    assignedToRole?: string;
-    assignedToEmail?: string;
-    dueDate?: string | null;
-  }>;
+  requirements: ComplianceRequirementItem[];
   firestoreDbId?: string;
 }
 

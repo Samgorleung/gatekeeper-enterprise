@@ -1,33 +1,12 @@
 import { getDeadlineInfo } from './deadlineUtils';
+import { ComplianceRequirementItem } from '@/lib/seedData';
 
 /**
  * Utility for exporting the current view of compliance requirements to a standard RFC-4180 CSV document.
  * Formatted for project stakeholders, Senior Responsible Owners (SROs), and auditing teams.
  */
 
-export interface ExportCsvRequirementItem {
-  id: string;
-  code: string;
-  title: string;
-  description: string;
-  gate: string;
-  category: string;
-  priority: string;
-  status: string;
-  isChecked: boolean;
-  evidenceThreshold: string;
-  documentRef?: string;
-  auditorNotes?: string;
-  auditedAt?: string | null;
-  auditorName?: string;
-  checkedBy?: string;
-  assignedTo?: string;
-  assignedToRole?: string;
-  assignedToEmail?: string;
-  dueDate?: string | null;
-  created_datetime?: string;
-  updated_datetime?: string | null;
-}
+export type ExportCsvRequirementItem = ComplianceRequirementItem;
 
 export interface ExportCsvOptions {
   projectName?: string;
