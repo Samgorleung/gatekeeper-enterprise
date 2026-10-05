@@ -9,7 +9,7 @@ import { CompanyProvider, useCompany } from '@/context/CompanyContext';
 import { ProjectSessionProvider } from '@/context/ProjectSessionContext';
 import { GlobalLoadingProvider } from '@/components/LoadingSystem';
 import { ConnectivityProvider, ConnectivityHeaderBadge, OfflineNoticeBanner } from '@/components/ConnectivityStatus';
-import { ActiveProjectHeaderBadge } from '@/components/ActiveProjectHeaderBadge';
+import { GlobalWorkspaceBar } from '@/components/GlobalWorkspaceBar';
 import { GlobalHeaderSearch } from '@/components/GlobalHeaderSearch';
 import { AuditFindingsSummaryCard } from '@/components/AuditFindingsSummaryCard';
 import { UserGuideModal } from '@/components/UserGuideModal';
@@ -162,9 +162,6 @@ function AppContent({ Component, pageProps }: AppProps) {
 
             {/* Zone 3: Executive Session & Connectivity */}
             <div className="header-actions">
-              {/* Active Audit Project Badge & Quick Switcher */}
-              <ActiveProjectHeaderBadge />
-
               {/* Company Profile / Data Setup Button */}
               <CompanyHeaderBadge />
 
@@ -232,8 +229,11 @@ function AppContent({ Component, pageProps }: AppProps) {
             componentName="Application Viewport"
             resetKeys={[router.asPath]}
           >
-            {/* High-Level Summary Card displaying Passed, Failed, and Pending findings */}
-            <AuditFindingsSummaryCard />
+            {/* Global Workspace Command Bar: Active Initiative, Switcher, Reload Prev, + New Project */}
+            <GlobalWorkspaceBar />
+
+            {/* High-Level Summary Card displaying Passed, Failed, and Pending findings (collapsible) */}
+            <AuditFindingsSummaryCard initialCollapsed={true} />
             <Component {...pageProps} />
           </ErrorBoundary>
         </main>

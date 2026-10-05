@@ -6,6 +6,35 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ---
 
+## [2.42.1] - 2026-10-05
+
+### Summary
+1. **Workspace Command Bar Layout & Spacing Calibration (`_app.tsx`, `App.css`, `GlobalWorkspaceBar.tsx`)**:
+   - Diagnosed and resolved the visual overlap where the Workspace Command Bar was rendered outside `.main-content`, causing it to overlap with the fixed 64px top navigation header.
+   - Relocated `<GlobalWorkspaceBar />` directly inside `<main className="main-content">` above the Executive Audit Findings & Assurance Scorecard (`AuditFindingsSummaryCard`), ensuring natural DOM flow below the fixed navbar.
+   - Adjusted `.main-content` top padding to `82px`, providing comfortable 18px separation below the navigation bar.
+   - Refined `GlobalWorkspaceBar` styling with an enterprise card aesthetic (crisp white background, `#cbd5e1` border, `#1d70b8` GovUK left accent border, and high-contrast pill badges), eliminating dark bar collisions.
+
+---
+
+## [2.42.0] - 2026-10-05
+
+### Summary
+1. **Executive Workspace Command Bar Reorganization (`GlobalWorkspaceBar.tsx`, `_app.tsx`)**:
+   - Reorganized the user interface layout by promoting active project management into a unified, high-visibility **Workspace Command Bar** (`frontend/components/GlobalWorkspaceBar.tsx`) positioned permanently directly below the top navigation bar.
+   - Provides immediate, zero-scroll access from every page to:
+     - **Active Audit Initiative Identification**: Project name, code, framework badge (GDPR Privacy, Security Baseline, AI Ethics, PMO Assurance), current phase gate, and real-time Cloud Firestore sync status.
+     - **Project Switcher (`Switch Project ▾`)**: Triggers the rich `ProjectSwitcherModal` with instant search and custom/benchmark filtering.
+     - **Reload Previous Project (`Reload Prev`)**: One-click restore of the previously audited initiative.
+     - **New Project Ingestion (`+ New Project`)**: Direct modal trigger to scaffold and save new projects into Cloud Firestore.
+     - **Quick Resume Action (`Resume Audit Console ➔`)**: Direct one-click deep link into the project assurance workspace.
+2. **De-cluttering & Vertical Viewport Optimization (`_app.tsx`, `PortfolioDashboard.tsx`)**:
+   - Removed the redundant mid-page `ActiveProjectResumeBanner` from the third section of the Portfolio Hub, eliminating vertical fragmentation and repetitive UI chrome.
+   - Configured `AuditFindingsSummaryCard` to initialize in compact/collapsed executive summary mode (`initialCollapsed={true}`) so that page content and dashboard analytics begin immediately below the Command Bar without excessive vertical displacement.
+   - Pruned obsolete standalone badge and banner components, keeping codebase architecture clean and maintainable.
+
+---
+
 ## [2.41.0] - 2026-10-05
 
 ### Summary

@@ -50,7 +50,6 @@ import { ErrorBoundary } from './ErrorBoundary';
 import { DashboardAuditFindingsSearch } from './DashboardAuditFindingsSearch';
 import { AutoRefreshToggle } from './AutoRefreshToggle';
 import { IngestCompanyProjectModal } from './IngestCompanyProjectModal';
-import { ActiveProjectResumeBanner } from './ActiveProjectResumeBanner';
 import { getFirestoreAll, db } from '@/lib/firebase';
 import { collection, onSnapshot } from 'firebase/firestore';
 import { fetchItems } from '@/utils/api';
@@ -550,9 +549,6 @@ export default function PortfolioDashboard() {
 
   return (
     <div style={{ maxWidth: '1440px', margin: '0 auto', paddingBottom: '60px' }}>
-      {/* Active Audit Workspace & Quick Resume Banner */}
-      <ActiveProjectResumeBanner />
-
       {/* Initial Onboarding Banner */}
       {(!companyProfile.isConfigured || companyProjectsCount === 0) && (
         <div style={{
