@@ -90,9 +90,30 @@ export const ProjectSessionProvider: React.FC<{ children: ReactNode }> = ({ chil
         const loaded: InfrastructureProject[] = [];
         snapshot.forEach(docSnap => {
           const data = docSnap.data() as any;
+          const baseSeed = activeInfrastructureProjects.find(s => s.id === docSnap.id);
           loaded.push({
-            id: docSnap.id,
+            ...(baseSeed || {}),
             ...data,
+            id: docSnap.id,
+            code: data.code || baseSeed?.code || 'ENT-01',
+            name: data.name || baseSeed?.name || 'Enterprise Initiative',
+            department: data.department || baseSeed?.department || 'Enterprise Governance',
+            sector: data.sector || baseSeed?.sector || 'Enterprise Cloud',
+            budgetFormatted: data.budgetFormatted || baseSeed?.budgetFormatted || '£10.0m',
+            sro: data.sro || baseSeed?.sro || 'Dr. Sarah Vance',
+            leadAuditor: data.leadAuditor || baseSeed?.leadAuditor || 'Sam Leung',
+            currentGate: data.currentGate || baseSeed?.currentGate || 'GATE_2',
+            gateLabel: data.gateLabel || baseSeed?.gateLabel || 'Gate 2: Pre-Deployment Audit',
+            nextReviewDate: data.nextReviewDate || baseSeed?.nextReviewDate || '2026-11-15',
+            reviewStatus: data.reviewStatus || baseSeed?.reviewStatus || 'Active Assurance',
+            assuranceScore: typeof data.assuranceScore === 'number' ? data.assuranceScore : (baseSeed?.assuranceScore ?? 80),
+            location: data.location || baseSeed?.location || 'Enterprise Cloud Infrastructure',
+            description: data.description || baseSeed?.description || 'Enterprise assurance initiative under stage-gate governance.',
+            totalRequirements: typeof data.totalRequirements === 'number' && data.totalRequirements > 0 ? data.totalRequirements : (baseSeed?.totalRequirements ?? 20),
+            compliantCount: typeof data.compliantCount === 'number' ? data.compliantCount : (baseSeed?.compliantCount ?? 15),
+            inProgressCount: typeof data.inProgressCount === 'number' ? data.inProgressCount : (baseSeed?.inProgressCount ?? 4),
+            flaggedCount: typeof data.flaggedCount === 'number' ? data.flaggedCount : (baseSeed?.flaggedCount ?? 1),
+            criticalRisksCount: typeof data.criticalRisksCount === 'number' ? data.criticalRisksCount : (baseSeed?.criticalRisksCount ?? 0),
             isCompanyProject: data.isCompanyProject !== false
           });
         });

@@ -100,7 +100,7 @@ export default function ReviewStatusDistributionChart({
         : 0;
 
       const totalBudgetBillion = matched.reduce((acc, p) => {
-        const parsed = parseFloat(p.budgetFormatted.replace(/[^0-9.]/g, '')) || 0;
+        const parsed = parseFloat((p.budgetFormatted || '').replace(/[^0-9.]/g, '')) || 0;
         return acc + parsed;
       }, 0);
 

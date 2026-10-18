@@ -335,15 +335,15 @@ export const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
 
   // Active governance framework config for the selected project
   const enterpriseFrameworkConfig = useMemo(() => {
-    const fw = (currentProject.framework as GovernanceFramework) || 'SECURITY_GDPR';
+    const fw = (currentProject?.framework as GovernanceFramework) || 'SECURITY_GDPR';
     return FRAMEWORK_CONFIGS[fw] || FRAMEWORK_CONFIGS.SECURITY_GDPR;
   }, [currentProject]);
 
   // 2. Dynamic 5 Quality Pillars Bar Chart Data
   const greenBookData: GreenBookCaseMetric[] = useMemo(() => {
-    const baseScore = currentProject.assuranceScore || 80;
+    const baseScore = currentProject?.assuranceScore || 80;
     const colors = ['#1d70b8', '#059669', '#7c3aed', '#d97706', '#0284c7'];
-    const pillars = enterpriseFrameworkConfig.pillars || FRAMEWORK_CONFIGS.SECURITY_GDPR.pillars;
+    const pillars = enterpriseFrameworkConfig?.pillars || FRAMEWORK_CONFIGS.SECURITY_GDPR.pillars || [];
 
     return pillars.map((pillar, idx) => {
       const offset = idx === 0 ? 3 : idx === 1 ? -6 : idx === 2 ? 4 : idx === 3 ? -4 : 2;
@@ -418,22 +418,24 @@ export const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
 
   // Filtered audit activity logs for this project
   const filteredAuditLogs = useMemo(() => {
-    return auditLogs.filter(log => {
-      // Filter by project if project matches or generic
+    return (auditLogs || []).filter(log => {
+      if (!log) return false;
+      const projName = (currentProject?.name || '').toLowerCase().substring(0, 10);
       const matchesProject =
         !log.projectName ||
-        log.projectName.toLowerCase().includes(currentProject.name.toLowerCase().substring(0, 10)) ||
-        (log as any).projectId === currentProject.id;
+        log.projectName.toLowerCase().includes(projName) ||
+        (log as any).projectId === currentProject?.id;
 
       if (!matchesProject && auditLogs.length > 5) {
         // Return project logs or general logs
       }
 
+      const logType = log.type || '';
       if (activityTypeFilter === 'ALL') return true;
-      if (activityTypeFilter === 'STATUS') return log.type === 'status_transition';
-      if (activityTypeFilter === 'RISK') return log.type === 'risk_flag';
-      if (activityTypeFilter === 'EVIDENCE') return log.type === 'evidence_upload';
-      if (activityTypeFilter === 'SIGNOFF') return log.type === 'audit_signoff';
+      if (activityTypeFilter === 'STATUS') return logType === 'status_transition';
+      if (activityTypeFilter === 'RISK') return logType === 'risk_flag';
+      if (activityTypeFilter === 'EVIDENCE') return logType === 'evidence_upload';
+      if (activityTypeFilter === 'SIGNOFF') return logType === 'audit_signoff';
       return true;
     });
   }, [auditLogs, currentProject, activityTypeFilter]);
@@ -2329,7 +2331,7 @@ export const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
                             isFlag ? '#991b1b' :
                             isTransition ? '#166534' : '#0369a1'
                         }}>
-                          {log.type.replace('_', ' ').toUpperCase()}
+                          {(log.type || 'activity').replace(/_/g, ' ').toUpperCase()}
                         </span>
 
                         {log.requirementCode && (

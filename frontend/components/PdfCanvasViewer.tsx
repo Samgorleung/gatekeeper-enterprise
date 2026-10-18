@@ -115,7 +115,14 @@ export const PdfCanvasViewer: React.FC<PdfCanvasViewerProps> = ({
     const handleZoomOut = () => setScale((prev) => Math.max(prev - 0.2, 0.6));
 
     const handleOpenNewTab = () => {
-        window.open(url, '_blank');
+        if (!url) return;
+        const link = document.createElement('a');
+        link.href = url;
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
     };
 
     if (loading) {

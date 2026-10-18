@@ -6,6 +6,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ---
 
+## [2.43.0] - 2026-10-18
+
+### Summary
+1. **Runtime Crash & Schema Integrity Resolution (`seedData.ts`, `PortfolioDashboard.tsx`, `ProjectDashboard.tsx`, `GlobalActivityFeed.tsx`, `ReviewStatusDistributionChart.tsx`)**:
+   - Diagnosed and resolved critical `TypeError: Cannot read properties of undefined (reading 'badge')` and `(reading 'map')` crashes across `/`, `/dashboard`, and `/project-dashboard` caused by missing keys (`ALL`, `AI_GOVERNANCE`, `ENTERPRISE_PMO`) and missing structural properties (`badge`, `shortLabel`, `icon`, `tagline`, `gates`, `pillars`) in `FRAMEWORK_CONFIGS`.
+   - Restored the complete, strongly-typed `FRAMEWORK_CONFIGS` dictionary, canonical `ActiveProjectSummary` fields (`code`, `sro`, `leadReviewer`, `assuranceScore`, `criticalRisksCount`, `amberRisksCount`, `compliantCount`, `totalRequirementsCount`, `nextGateDate`, `budgetFormatted`, `summary`), `ComplianceRequirementItem` attributes, `AuditActivity` schemas, and fallback datasets (`fallbackProject`, `fallbackCriteria`, `fallbackResults`, `fallbackFiles`, `fallbackChunks`).
+   - Added defensive null-safety guards on framework configurations, quality pillar arrays, activity type filters, and budget string parsing across all dashboard and analytics components.
+2. **Firestore Data Layer & Relational API Hardening (`frontend/lib/firebase.ts`, `firestore.rules`)**:
+   - Replaced the permissive collection normalizer with an explicit `ALLOWED_COLLECTIONS` allowlist (`projects`, `criteria`, `results`, `files`, `chunks`, `ratings`, `evaluations`, `compliance_requirements`, `compliance_comments`, `compliance_activities`, `user_sessions`) and strict `isValidDocId()` validation to block arbitrary collection injection and path traversal.
+   - Fixed `getFirestoreAll` and `getFirestoreById` to properly query live Cloud Firestore collections (`projects`, `results`, `criteria`, `files`, `chunks`) before falling back to deterministic baseline seed data, ensuring custom user-created projects and evaluations persist and reload seamlessly.
+   - Removed the wildcard catch-all write rule (`match /{document=**} { allow read, write: if true; }`) in `firestore.rules`, enforcing document ID pattern validation (`isValidId`), payload key limits (`isReasonableSize`), status enum checks, and default-deny rules for unmapped shadow collections.
+3. **API Endpoint, DOM, & HTTP Security Hardening (`get_items/[uuid].ts`, `upload_file.ts`, `PdfCanvasViewer.tsx`, `next.config.js`)**:
+   - Remediated an Open Redirect / SSRF vector in `/api/get_items/[uuid].ts` by restricting external `307` redirects strictly to verified HTTPS `firebasestorage.googleapis.com` and `storage.googleapis.com` origins.
+   - Hardened `/api/upload_file.ts` with MIME type allowlisting (`application/pdf`, `text/plain`, `text/markdown`, `application/json`), filename sanitization, and field length bounds.
+   - Replaced `window.open` in `PdfCanvasViewer.tsx` with a safe `noopener noreferrer` anchor trigger for iframe sandbox compliance.
+   - Configured production-grade HTTP security headers (`X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`, `X-XSS-Protection: 1; mode=block`, `Permissions-Policy: camera=(), microphone=(), geolocation=()`, and `poweredByHeader: false`) in `frontend/next.config.js`.
+
+---
+
 ## [2.42.1] - 2026-10-05
 
 ### Summary

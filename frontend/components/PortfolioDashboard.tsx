@@ -79,9 +79,30 @@ export default function PortfolioDashboard() {
           const loadedProjects: InfrastructureProject[] = [];
           snapshot.forEach(doc => {
             const data = doc.data() as any;
+            const baseSeed = activeInfrastructureProjects.find(s => s.id === doc.id);
             loadedProjects.push({
-              id: doc.id,
+              ...(baseSeed || {}),
               ...data,
+              id: doc.id,
+              code: data.code || baseSeed?.code || 'ENT-01',
+              name: data.name || baseSeed?.name || 'Enterprise Initiative',
+              department: data.department || baseSeed?.department || 'Enterprise Governance',
+              sector: data.sector || baseSeed?.sector || 'Enterprise Cloud',
+              budgetFormatted: data.budgetFormatted || baseSeed?.budgetFormatted || '£10.0m',
+              sro: data.sro || baseSeed?.sro || 'Dr. Sarah Vance',
+              leadAuditor: data.leadAuditor || baseSeed?.leadAuditor || 'Sam Leung',
+              currentGate: data.currentGate || baseSeed?.currentGate || 'GATE_2',
+              gateLabel: data.gateLabel || baseSeed?.gateLabel || 'Gate 2: Pre-Deployment Audit',
+              nextReviewDate: data.nextReviewDate || baseSeed?.nextReviewDate || '2026-11-15',
+              reviewStatus: data.reviewStatus || baseSeed?.reviewStatus || 'Active Assurance',
+              assuranceScore: typeof data.assuranceScore === 'number' ? data.assuranceScore : (baseSeed?.assuranceScore ?? 80),
+              location: data.location || baseSeed?.location || 'Enterprise Cloud Infrastructure',
+              description: data.description || baseSeed?.description || 'Enterprise assurance initiative under stage-gate governance.',
+              totalRequirements: typeof data.totalRequirements === 'number' && data.totalRequirements > 0 ? data.totalRequirements : (baseSeed?.totalRequirements ?? 20),
+              compliantCount: typeof data.compliantCount === 'number' ? data.compliantCount : (baseSeed?.compliantCount ?? 15),
+              inProgressCount: typeof data.inProgressCount === 'number' ? data.inProgressCount : (baseSeed?.inProgressCount ?? 4),
+              flaggedCount: typeof data.flaggedCount === 'number' ? data.flaggedCount : (baseSeed?.flaggedCount ?? 1),
+              criticalRisksCount: typeof data.criticalRisksCount === 'number' ? data.criticalRisksCount : (baseSeed?.criticalRisksCount ?? 0),
               isCompanyProject: data.isCompanyProject !== false
             });
           });
@@ -175,21 +196,21 @@ export default function PortfolioDashboard() {
 
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase();
-        const matchName = proj.name.toLowerCase().includes(q);
-        const matchCode = proj.code.toLowerCase().includes(q);
-        const matchDept = proj.department.toLowerCase().includes(q);
-        const matchSro = proj.sro.toLowerCase().includes(q);
-        const matchLocation = proj.location.toLowerCase().includes(q);
+        const matchName = (proj.name || '').toLowerCase().includes(q);
+        const matchCode = (proj.code || '').toLowerCase().includes(q);
+        const matchDept = (proj.department || '').toLowerCase().includes(q);
+        const matchSro = (proj.sro || '').toLowerCase().includes(q);
+        const matchLocation = (proj.location || '').toLowerCase().includes(q);
         if (!matchName && !matchCode && !matchDept && !matchSro && !matchLocation) {
           return false;
         }
       }
       return true;
     }).sort((a, b) => {
-      if (sortBy === 'score_desc') return b.assuranceScore - a.assuranceScore;
-      if (sortBy === 'score_asc') return a.assuranceScore - b.assuranceScore;
+      if (sortBy === 'score_desc') return (b.assuranceScore || 0) - (a.assuranceScore || 0);
+      if (sortBy === 'score_asc') return (a.assuranceScore || 0) - (b.assuranceScore || 0);
       if (sortBy === 'budget') {
-        const parseB = (val: string) => parseFloat(val.replace(/[^0-9.]/g, '')) || 0;
+        const parseB = (val?: string) => parseFloat((val || '').replace(/[^0-9.]/g, '')) || 0;
         return parseB(b.budgetFormatted) - parseB(a.budgetFormatted);
       }
       // default: by next review date
@@ -219,13 +240,13 @@ export default function PortfolioDashboard() {
   // Aggregate Portfolio Statistics
   const portfolioMetrics = useMemo(() => {
     const totalProjects = projects.length;
-    const totalRequirements = projects.reduce((acc, p) => acc + p.totalRequirements, 0);
-    const totalCompliant = projects.reduce((acc, p) => acc + p.compliantCount, 0);
-    const totalInProgress = projects.reduce((acc, p) => acc + p.inProgressCount, 0);
-    const totalFlagged = projects.reduce((acc, p) => acc + p.flaggedCount, 0);
-    const averageScore = Math.round(projects.reduce((acc, p) => acc + p.assuranceScore, 0) / (totalProjects || 1));
+    const totalRequirements = projects.reduce((acc, p) => acc + (p.totalRequirements || 0), 0);
+    const totalCompliant = projects.reduce((acc, p) => acc + (p.compliantCount || 0), 0);
+    const totalInProgress = projects.reduce((acc, p) => acc + (p.inProgressCount || 0), 0);
+    const totalFlagged = projects.reduce((acc, p) => acc + (p.flaggedCount || 0), 0);
+    const averageScore = Math.round(projects.reduce((acc, p) => acc + (p.assuranceScore || 0), 0) / (totalProjects || 1));
     const upcoming14Days = deadlines.filter(d => d.daysRemaining <= 14 && d.status !== 'Submitted').length;
-    const criticalRisks = projects.reduce((acc, p) => acc + p.criticalRisksCount, 0);
+    const criticalRisks = projects.reduce((acc, p) => acc + (p.criticalRisksCount || 0), 0);
 
     return {
       totalProjects,
@@ -296,7 +317,7 @@ export default function PortfolioDashboard() {
       deadlineDate: newDeadlineDate,
       daysRemaining: diffDays,
       urgency,
-      gate: proj.gateLabel.split(':')[0].trim(),
+      gate: (proj.gateLabel || proj.currentGate || 'Gate 2').split(':')[0].trim(),
       leadOwner: newDeadlineOwner,
       owner: newDeadlineOwner,
       requiredItem: newDeadlineTitle,

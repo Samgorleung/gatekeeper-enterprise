@@ -28,19 +28,27 @@ export default async function handler(
 
     const { name, cleanName, summary, fileType, dataUrl, contentBase64 } = body || {};
 
-    if (!name) {
-      res.status(400).json({ error: 'Document name is required.' });
+    if (!name || typeof name !== 'string' || name.trim().length === 0) {
+      res.status(400).json({ error: 'Valid document name is required.' });
       return;
     }
 
+    const allowedMimeTypes = ['application/pdf', 'text/plain', 'text/markdown', 'application/json'];
+    const safeMimeType = allowedMimeTypes.includes(fileType) ? fileType : 'application/pdf';
+
     const fileId = `file_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
-    const sanitizedName = name.replace(/[^a-zA-Z0-9._-]/g, '_');
+    const sanitizedName = name.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 120);
     const storagePath = `documents/${fileId}_${sanitizedName}`;
 
     let downloadUrl = `/api/get_items/${fileId}`;
 
     // If file content is provided, upload directly to Firebase Storage
-    const uploadPayload = dataUrl || (contentBase64 ? `data:${fileType || 'application/pdf'};base64,${contentBase64}` : null);
+    const uploadPayload =
+      typeof dataUrl === 'string' && dataUrl.startsWith('data:')
+        ? dataUrl
+        : typeof contentBase64 === 'string' && contentBase64.length > 0
+        ? `data:${safeMimeType};base64,${contentBase64}`
+        : null;
 
     if (uploadPayload && storage) {
       try {
@@ -55,9 +63,9 @@ export default async function handler(
     const fileRecord = {
       id: fileId,
       name: sanitizedName,
-      clean_name: cleanName || name.replace(/\.[^/.]+$/, ''),
-      type: fileType || 'application/pdf',
-      summary: summary || `Uploaded assurance document bundle: ${sanitizedName}`,
+      clean_name: (typeof cleanName === 'string' && cleanName.trim() ? cleanName.trim() : name.replace(/\.[^/.]+$/, '')).slice(0, 120),
+      type: safeMimeType,
+      summary: (typeof summary === 'string' && summary.trim() ? summary.trim() : `Uploaded assurance document bundle: ${sanitizedName}`).slice(0, 1000),
       storage_path: storagePath,
       url: downloadUrl
     };

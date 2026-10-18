@@ -17,13 +17,20 @@ export default async function handler(
   }
 
   try {
-    const uuid = query.uuid as string;
-    if (uuid) {
+    const uuid = typeof query.uuid === 'string' ? query.uuid.trim() : '';
+    if (uuid && /^[a-zA-Z0-9_-]{1,128}$/.test(uuid)) {
       const fileData = await getFirestoreById('files', uuid);
-      if (fileData?.url && fileData.url.startsWith('http')) {
-        // Redirect to Firebase Storage download URL
-        res.redirect(307, fileData.url);
-        return;
+      if (fileData?.url && typeof fileData.url === 'string' && fileData.url.startsWith('https://')) {
+        try {
+          const parsedUrl = new URL(fileData.url);
+          const allowedHosts = ['firebasestorage.googleapis.com', 'storage.googleapis.com'];
+          if (allowedHosts.includes(parsedUrl.hostname)) {
+            res.redirect(307, parsedUrl.toString());
+            return;
+          }
+        } catch {
+          // Invalid URL format; fall through to safe inline PDF buffer
+        }
       }
     }
 

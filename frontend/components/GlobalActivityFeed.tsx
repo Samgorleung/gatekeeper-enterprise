@@ -143,16 +143,17 @@ export const GlobalActivityFeed: React.FC<GlobalActivityFeedProps> = ({
         }
 
         // Type filter
+        const itemType = item.type || '';
         if (selectedType !== 'ALL') {
           if (selectedType === 'BULK_ONLY') {
-            if (!item.type.startsWith('bulk_')) return false;
+            if (!itemType.startsWith('bulk_')) return false;
           } else if (selectedType === 'TRANSITION_ONLY') {
-            if (item.type !== 'status_transition' && item.type !== 'bulk_status_update') return false;
+            if (itemType !== 'status_transition' && itemType !== 'bulk_status_update') return false;
           } else if (selectedType === 'ASSIGNMENT_ONLY') {
-            if (item.type !== 'assignment' && item.type !== 'bulk_assignment') return false;
+            if (itemType !== 'assignment' && itemType !== 'bulk_assignment') return false;
           } else if (selectedType === 'VERIFICATION_ONLY') {
-            if (item.type !== 'verification' && item.type !== 'bulk_verification') return false;
-          } else if (item.type !== selectedType) {
+            if (itemType !== 'verification' && itemType !== 'bulk_verification') return false;
+          } else if (itemType !== selectedType) {
             return false;
           }
         }
@@ -185,10 +186,11 @@ export const GlobalActivityFeed: React.FC<GlobalActivityFeedProps> = ({
     let compliantSignOffCount = 0;
 
     activities.forEach((act) => {
-      if (act.type === 'status_transition' || act.type === 'bulk_status_update') {
+      const actType = act?.type || '';
+      if (actType === 'status_transition' || actType === 'bulk_status_update') {
         statusTransitionsCount++;
       }
-      if (act.type.startsWith('bulk_')) {
+      if (actType.startsWith('bulk_')) {
         bulkActionsCount++;
         requirementsAffectedInBulk += act.affectedCount || 0;
       }
